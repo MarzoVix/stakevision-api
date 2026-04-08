@@ -4,14 +4,6 @@ import json
 
 ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
 
-# Use PaddleOCR v2.9.1 (C:/pp) — 30x faster than v3.4.0 without oneDNN
-sys.path.insert(0, 'C:/pp')
-from paddleocr import PaddleOCR
-import re
-import json
-
-ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
-
 def extract_lines(img_path: str) -> list[dict]:
     result = ocr.ocr(img_path, cls=True)
     if not result or not result[0]:
