@@ -4,6 +4,13 @@ import json
 
 ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
 
+# Use PaddleOCR v2.9.1 (C:/pp) — 30x faster than v3.4.0 without oneDNN
+sys.path.insert(0, 'C:/pp')
+from paddleocr import PaddleOCR
+import re
+import json
+
+ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
 
 def extract_lines(img_path: str) -> list[dict]:
     result = ocr.ocr(img_path, cls=True)
@@ -124,6 +131,55 @@ def detect_sportsbook(lines: list[dict]) -> str:
 
     return 'Unknown'
 
+# ── Shared Utilities ──────────────────────────────────────────────────────────
+
+NOISE_WORDS = {'TO', 'No', 'Yes', 'Out', 'Win', 'Bet', 'The', 'For', 'All',
+               'Or', 'At', 'In', 'On', 'If', 'An', 'Up', 'My', 'So', 'Do'}
+
+def is_valid_player_name(name: str) -> bool:
+    if not name or len(name) < 4:
+        return False
+    if not re.search(r'[A-Za-z]{2,}', name):
+        return False
+    if name.strip() in NOISE_WORDS:
+        return False
+    return True
+
+def is_fake_leg(sel: dict) -> bool:
+    combined = f"{sel.get('player','') or ''} {sel.get('stat','') or ''} {sel.get('market','') or ''}"
+    return bool(re.search(r'\d+\s*(Pick|Leg)\s*(Parlay|SGP)', combined, re.I))
+
+SPORT_TEAMS = {
+    'MLB': ['Cardinals', 'Yankees', 'Red Sox', 'Cubs', 'Dodgers', 'Mets', 'Braves',
+            'Athletics', 'Tigers', 'Nationals', 'Blue Jays', 'Padres', 'Giants',
+            'Phillies', 'Brewers', 'Royals', 'Reds', 'Rangers', 'Orioles', 'Pirates',
+            'Astros', 'Angels', 'Rays', 'Twins', 'Mariners', 'Guardians', 'Rockies',
+            'Marlins', 'Diamondbacks', 'White Sox'],
+    'NBA': ['Lakers', 'Celtics', 'Warriors', 'Heat', 'Bulls', 'Knicks', 'Nets',
+            'Bucks', 'Suns', 'Clippers', 'Nuggets', 'Mavericks', 'Thunder', 'Spurs',
+            '76ers', 'Raptors', 'Grizzlies', 'Pelicans', 'Timberwolves', 'Hawks',
+            'Cavaliers', 'Pacers', 'Magic', 'Pistons', 'Wizards', 'Hornets', 'Jazz',
+            'Trail Blazers', 'Kings', 'Rockets'],
+    'NHL': ['Maple Leafs', 'Canadiens', 'Bruins', 'Penguins', 'Blackhawks', 'Rangers',
+            'Ducks', 'Kings', 'Sharks', 'Senators', 'Flames', 'Oilers', 'Canucks',
+            'Lightning', 'Panthers', 'Hurricanes', 'Devils', 'Islanders', 'Flyers',
+            'Capitals', 'Blue Jackets', 'Predators', 'Stars', 'Wild', 'Jets',
+            'Avalanche', 'Kraken', 'Sabres', 'Red Wings', 'Coyotes'],
+    'NFL': ['Chiefs', 'Eagles', 'Cowboys', 'Patriots', 'Packers', 'Bears', '49ers',
+            'Broncos', 'Ravens', 'Steelers', 'Seahawks', 'Bills', 'Dolphins',
+            'Bengals', 'Chargers', 'Raiders', 'Colts', 'Texans', 'Titans',
+            'Jaguars', 'Browns', 'Saints', 'Buccaneers', 'Falcons', 'Panthers',
+            'Cardinals', 'Rams', 'Giants', 'Commanders', 'Lions', 'Vikings'],
+}
+
+def detect_sport_from_text(text: str) -> str:
+    text_lower = text.lower()
+    for sport, teams in SPORT_TEAMS.items():
+        for team in teams:
+            if team.lower() in text_lower:
+                return sport
+    return ''
+
 # Stat keywords used to identify player prop lines (not team/date lines)
 DK_STAT_WORDS = ['Hits', 'Runs + RBI', 'RBI', 'RBl', 'HR', 'Home Run',
                  'Points', 'Rebounds', 'Assists', 'Touchdowns', 'Yards',
@@ -174,7 +230,6 @@ def parse_draftkings(lines: list[dict]) -> dict:
             continue
 
         # Bet type + odds — only set once
-        # "2 Pick Parlay CASH OUT +219" — grab the LAST [+-]digits as odds
         if not result['bet_type']:
             m = re.search(r'(\d+)\s*Pick\s*(Parlay|SGP)', text, re.I)
             if m:
@@ -203,10 +258,11 @@ def parse_draftkings(lines: list[dict]) -> dict:
         # Player + stat line (H+R+RBI type props)
         if _is_stat_line(text):
             player, stat = _extract_player_stat(text)
-            result['selections'].append({
-                'player': player, 'stat': stat, 'pick': 'Over',
-                'line': current_line, 'pick_type': 'PROP'
-            })
+            if is_valid_player_name(player):
+                result['selections'].append({
+                    'player': player, 'stat': stat, 'pick': 'Over',
+                    'line': current_line, 'pick_type': 'PROP'
+                })
             current_line = ''
             continue
 
@@ -247,10 +303,32 @@ def parse_draftkings(lines: list[dict]) -> dict:
             if not result['bet_type']: result['bet_type'] = 'Parlay'
             continue
 
-        # Market type label (attach to last selection)
-        if re.match(r'^(Moneyline|Run Line|Spread|Total)', text, re.I):
+        # ── Fix 2: Single bet moneyline — "NY Yankees" then "Moneyline"
+        if re.match(r'^Moneyline$', text.strip(), re.I):
+            if not result['selections'] and i > 0:
+                team = texts[i-1].strip()
+                if is_valid_player_name(team):
+                    result['selections'].append({
+                        'team': team, 'market': 'Moneyline', 'pick_type': 'MONEYLINE'
+                    })
+                    if not result['bet_type']: result['bet_type'] = 'Straight'
+                    continue
+            # Attach to last selection
             if result['selections']:
                 result['selections'][-1]['market'] = text.strip()
+            continue
+
+        # Market type label (attach to last selection)
+        if re.match(r'^(Run Line|Spread|Total)', text, re.I):
+            if result['selections']:
+                result['selections'][-1]['market'] = text.strip()
+            continue
+
+        # ── Fix 3: CASH OUT line with odds — "NY Yankees CASH OUT -219"
+        if 'cash out' in text.lower() and not result['total_odds']:
+            odds_m = re.search(r'[+-]\d{2,}', text)
+            if odds_m:
+                result['total_odds'] = odds_m.group(0)
             continue
 
         # ── Matchup: "LA Dodgers @ TOR Blue Jays • Today 2:07PM"
@@ -262,18 +340,17 @@ def parse_draftkings(lines: list[dict]) -> dict:
                 result['selections'][-1]['event'] = event
             continue
 
-    # Filter out fake header legs (e.g. player="2 Pick Parlay")
-    result['selections'] = [
-        s for s in result['selections']
-        if not re.match(r'^\d+\s*(Pick|Leg)\s*(Parlay|SGP)', s.get('player', ''), re.I)
-        and not re.match(r'^\d+\s*(Pick|Leg)\s*(Parlay|SGP)', s.get('stat', ''), re.I)
-        and not re.match(r'^\d+\s*(Pick|Leg)\s*(Parlay|SGP)', s.get('market', ''), re.I)
-    ]
+    # Filter out fake header legs
+    result['selections'] = [s for s in result['selections'] if not is_fake_leg(s)]
 
     # Extract leg count from bet_type
     leg_count_m = re.search(r'(\d+)\s*Pick', result.get('bet_type', ''), re.I)
     if leg_count_m:
         result['leg_count'] = int(leg_count_m.group(1))
+
+    # Fix 4: Detect sport from all text
+    all_text = ' '.join(l['text'] for l in lines)
+    result['sport'] = detect_sport_from_text(all_text)
 
     return result
 
@@ -1068,108 +1145,3 @@ def parse_onyx(lines: list[dict]) -> dict:
             result['total_odds'] = prop_m.group(4)
             i += 1; continue
 
-        # ── Format 2: Market line — "Will There Be Overtime: Yes" ──
-        market_m = re.match(r'^(.+?):\s*(Yes|No|Over|Under)$', text, re.I)
-        if market_m:
-            current_sel = {
-                'market': market_m.group(1).strip(),
-                'pick': market_m.group(2),
-            }
-            result['selections'].append(current_sel)
-            i += 1; continue
-
-        # ── Format 3: Market description ──
-        if re.match(r'^(Player|Team)', text, re.I) or re.search(r'(Double|Triple|Goals|Assists)', text, re.I):
-            if current_sel:
-                current_sel['market'] = text.strip()
-            i += 1; continue
-
-        # ── Total odds standalone ──
-        if re.match(r'^[+-]\d{3,}$', text.strip()):
-            if not result['total_odds']:
-                result['total_odds'] = text.strip()
-            i += 1; continue
-
-        # ── Format 1: Selection with spread+odds ──
-        sel_m = re.match(
-            r'^[A-Za-z]?\s*(\d+)\s+([A-Za-z][A-Za-z\s]+?)\s+([+-][\d\.]+)\s+([+-]\d+)$', text.strip()
-        )
-        if sel_m:
-            current_sel = {
-                'team': sel_m.group(2).strip(),
-                'line': sel_m.group(3),
-                'odds': sel_m.group(4),
-            }
-            result['selections'].append(current_sel)
-            if not result['bet_type']: result['bet_type'] = 'Parlay'
-            i += 1; continue
-
-        # ── Format 1: Selection moneyline ──
-        ml_m = re.match(
-            r'^[A-Za-z]?\s*(\d+)\s+([A-Za-z][A-Za-z\s]+?)\s+([+-]\d+)$', text.strip()
-        )
-        if ml_m:
-            current_sel = {
-                'team': ml_m.group(2).strip(),
-                'odds': ml_m.group(3),
-            }
-            result['selections'].append(current_sel)
-            if not result['bet_type']: result['bet_type'] = 'Parlay'
-            i += 1; continue
-
-        # ── Market type ──
-        if re.match(r'^(SPREAD|TO\s*WIN|MONEYLINE|TOTAL)', text.strip(), re.I):
-            if current_sel:
-                current_sel['market'] = text.strip()
-            i += 1; continue
-
-        # ── Matchup ──
-        if re.search(r'\s(@|vs\.?\s)', text, re.I):
-            if current_sel:
-                current_sel['event'] = text.strip()
-            elif result['selections']:
-                result['selections'][-1]['event'] = text.strip()
-            i += 1; continue
-
-        # ── Score line: "CHI Bulls NYK Knicks" + "96 VS 136" ──
-        if re.search(r'\d+\s+VS\s+\d+', text, re.I):
-            if current_sel:
-                current_sel['score'] = text.strip()
-            i += 1; continue
-
-        # ── Date/time ──
-        if re.search(r'(Today|Tomorrow|Final|\d+:\d+\s*(am|pm|AM|PM)|\w+\s+\d+,\s*\d{4})', text, re.I):
-            if current_sel:
-                current_sel['date'] = re.sub(r'^[a-z]\d?\s+', '', text).strip()
-            i += 1; continue
-
-        i += 1
-
-    return result
-
-# ── Main parse function ───────────────────────────────────────────────────────
-def parse_slip(img_path: str, sportsbook: str = None) -> dict:
-    lines = extract_lines(img_path)
-    if not lines:
-        return {'error': 'No text detected'}
-
-    # Use provided sportsbook or fall back to auto-detection
-    book = sportsbook or detect_sportsbook(lines)
-
-    parsers = {
-        'DraftKings': parse_draftkings,
-        'FanDuel': parse_fanduel,
-        'PrizePicks': parse_prizepicks,
-        'Underdog': parse_underdog,
-        'BetMGM': parse_betmgm,
-        'Fanatics': parse_fanatics,
-        'Onyx': parse_onyx,
-    }
-
-    parser = parsers.get(book)
-    if parser:
-        result = parser(lines)
-    else:
-        result = {'sportsbook': book, 'raw_lines': [l['text'] for l in lines]}
-
-    return result
