@@ -174,13 +174,14 @@ def parse_draftkings(lines: list[dict]) -> dict:
             continue
 
         # Bet type + odds — only set once
+        # "2 Pick Parlay CASH OUT +219" — grab the LAST [+-]digits as odds
         if not result['bet_type']:
             m = re.search(r'(\d+)\s*Pick\s*(Parlay|SGP)', text, re.I)
             if m:
                 result['bet_type'] = f"{m.group(1)} Pick {m.group(2)}"
-                odds_m = re.search(r'[+-]\d+', text)
-                if odds_m:
-                    result['total_odds'] = odds_m.group(0)
+                all_odds = re.findall(r'[+-]\d{2,}', text)
+                if all_odds:
+                    result['total_odds'] = all_odds[-1]
                 continue
 
         # Wager + payout — handle "Wager: $25.00 I Paid: $62.50" and "Wager: $8.00 1 Paid $14.66"
@@ -250,6 +251,15 @@ def parse_draftkings(lines: list[dict]) -> dict:
         if re.match(r'^(Moneyline|Run Line|Spread|Total)', text, re.I):
             if result['selections']:
                 result['selections'][-1]['market'] = text.strip()
+            continue
+
+        # ── Matchup: "LA Dodgers @ TOR Blue Jays • Today 2:07PM"
+        if re.search(r'\s@\s', text):
+            # Extract the matchup part (before bullet/time)
+            matchup_m = re.search(r'([A-Z].*?@[^•]+)', text)
+            event = matchup_m.group(1).strip() if matchup_m else text.strip()
+            if result['selections'] and not result['selections'][-1].get('event'):
+                result['selections'][-1]['event'] = event
             continue
 
     return result
