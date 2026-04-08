@@ -10,10 +10,21 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt .
+
+# 1) Headless opencv first (no libGL needed)
 RUN pip install --no-cache-dir opencv-python-headless==4.10.0.84
-RUN pip install --no-cache-dir --no-deps paddleocr==2.9.1
-RUN pip install --no-cache-dir paddlepaddle==2.6.2 pyclipper shapely scikit-image imgaug lmdb lxml beautifulsoup4 rapidfuzz python-docx
+
+# 2) PaddlePaddle engine
+RUN pip install --no-cache-dir paddlepaddle==2.6.2
+
+# 3) PaddleOCR without deps (prevents opencv-python override)
+#    Then install its actual deps manually
+RUN pip install --no-cache-dir --no-deps paddleocr==2.9.1 && \
+    pip install --no-cache-dir \
+    requests pyclipper shapely scikit-image imgaug lmdb lxml \
+    beautifulsoup4 rapidfuzz python-docx pyyaml tqdm fire cython
+
+# 4) App deps
 RUN pip install --no-cache-dir fastapi uvicorn python-multipart Pillow
 
 COPY . .
