@@ -10,7 +10,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip uninstall -y opencv-python opencv-contrib-python 2>/dev/null; \
+    pip install --no-cache-dir opencv-python-headless
 
 COPY . .
 EXPOSE 8000
