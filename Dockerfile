@@ -22,8 +22,9 @@ RUN pip install --no-cache-dir opencv-python-headless==4.10.0.84
 RUN pip install --no-cache-dir paddlepaddle==2.6.2
 RUN pip install --no-cache-dir --no-deps paddleocr==2.9.1
 RUN pip install --no-cache-dir \
-    imgaug requests pyclipper shapely scikit-image lmdb lxml \
-    beautifulsoup4 rapidfuzz python-docx pyyaml tqdm fire cython
+    imgaug albumentations requests pyclipper shapely scikit-image \
+    lmdb lxml beautifulsoup4 rapidfuzz python-docx pyyaml tqdm \
+    fire cython openpyxl attrdict3 premailer
 RUN pip install --no-cache-dir fastapi uvicorn python-multipart Pillow
 
 COPY . .
