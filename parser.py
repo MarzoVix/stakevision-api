@@ -215,7 +215,24 @@ def parse_draftkings(lines: list[dict]) -> dict:
               'wager': '', 'payout': '', 'status': '', 'selections': []}
 
     current_line = ''
+    current_event = ''
     for i, text in enumerate(texts):
+        # ── Matchup with @: "LA Dodgers @ TOR Blue Jays • Today 2:07PM"
+        # Set current_event for @ patterns (these appear inline with selections)
+        if re.search(r'\s@\s', text):
+            matchup_m = re.search(r'([A-Z].*?@[^•\u00ab\u00bb]+)', text)
+            current_event = matchup_m.group(1).strip() if matchup_m else text.strip()
+            current_event = re.sub(r'[\u00ab\u00bb\s]+$', '', current_event).strip()
+            if result['selections'] and not result['selections'][-1].get('event'):
+                result['selections'][-1]['event'] = current_event
+            continue
+
+        # Skip team name lines and dates — handled in post-processing
+        if re.match(r'^[A-Z]{2,4}\s+[A-Z]{2,}', text.strip()):
+            continue
+        if re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d', text, re.I):
+            continue
+
         # Status (standalone or at end of line like "Won")
         if re.match(r'^(Open|Won|Lost|Push|Settled|Void)$', text, re.I):
             result['status'] = text.strip()
@@ -231,7 +248,7 @@ def parse_draftkings(lines: list[dict]) -> dict:
                     result['total_odds'] = all_odds[-1]
                 continue
 
-        # Wager + payout — handle "Wager: $25.00 I Paid: $62.50" and "Wager: $8.00 1 Paid $14.66"
+        # Wager + payout
         wager_m = re.search(r'Wager[:\s]+\$?([\d,\.]+)', text, re.I)
         pay_m = re.search(r'(?:To Pay|Payout|Paid)[:\s]+\$?([\d,\.]+)', text, re.I)
         if wager_m: result['wager'] = wager_m.group(1).replace(',', '')
@@ -253,17 +270,19 @@ def parse_draftkings(lines: list[dict]) -> dict:
             if is_valid_player_name(player):
                 result['selections'].append({
                     'player': player, 'stat': stat, 'pick': 'Over',
-                    'line': current_line, 'pick_type': 'PROP'
+                    'line': current_line, 'pick_type': 'PROP',
+                    'event': current_event
                 })
             current_line = ''
             continue
 
-        # ── Live bet: "Strike/Foul 1 -120 Won" or "Ball/Hit by Pitch 1 +150 Won"
+        # ── Live bet: "Strike/Foul 1 -120 Won"
         live_m = re.match(r'^(.+?)\s+(\d+)\s+([+-]\d+)\s+(Won|Lost|Push)', text, re.I)
         if live_m:
             result['selections'].append({
                 'market': live_m.group(1), 'line': live_m.group(2),
-                'odds': live_m.group(3), 'pick_type': 'LIVE'
+                'odds': live_m.group(3), 'pick_type': 'LIVE',
+                'event': current_event
             })
             result['status'] = live_m.group(4)
             if not result['total_odds']: result['total_odds'] = live_m.group(3)
@@ -272,40 +291,43 @@ def parse_draftkings(lines: list[dict]) -> dict:
 
         # ── Live bet context: "Live Yoan Moncada - 5th Plate Appearance..."
         if text.startswith('Live ') and result['selections']:
-            result['selections'][-1]['event'] = text[5:].strip()
+            current_event = text[5:].strip()
+            result['selections'][-1]['event'] = current_event
             continue
 
-        # ── Moneyline leg: "PHI Phillies 168" or "1D PHI Phillies 168"
+        # ── Moneyline leg
         ml_m = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z]{2,4})\s+([A-Za-z\s]+?)\s+(-?\d+)$', text.strip())
         if ml_m and i + 1 < len(texts) and re.match(r'^(Moneyline|Run Line|Spread)', texts[i+1], re.I):
             result['selections'].append({
                 'team': f"{ml_m.group(1)} {ml_m.group(2).strip()}",
-                'odds': ml_m.group(3), 'pick_type': 'MONEYLINE'
+                'odds': ml_m.group(3), 'pick_type': 'MONEYLINE',
+                'event': current_event
             })
             if not result['bet_type']: result['bet_type'] = 'Parlay'
             continue
 
-        # ── Spread/Run Line leg: "ATLBraves -1 114" or "TOR Blue Jays -1 114"
+        # ── Spread/Run Line leg
         spread_m = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z][A-Za-z\s]+?)\s+([+-][\d\.]+)\s+(-?\d+)$', text.strip())
         if spread_m and i + 1 < len(texts) and re.match(r'^(Run Line|Spread)', texts[i+1], re.I):
             result['selections'].append({
                 'team': spread_m.group(1).strip(), 'line': spread_m.group(2),
-                'odds': spread_m.group(3), 'pick_type': 'SPREAD'
+                'odds': spread_m.group(3), 'pick_type': 'SPREAD',
+                'event': current_event
             })
             if not result['bet_type']: result['bet_type'] = 'Parlay'
             continue
 
-        # ── Fix 2: Single bet moneyline — "NY Yankees" then "Moneyline"
+        # ── Single bet moneyline — "NY Yankees" then "Moneyline"
         if re.match(r'^Moneyline$', text.strip(), re.I):
             if not result['selections'] and i > 0:
                 team = texts[i-1].strip()
                 if is_valid_player_name(team):
                     result['selections'].append({
-                        'team': team, 'market': 'Moneyline', 'pick_type': 'MONEYLINE'
+                        'team': team, 'market': 'Moneyline', 'pick_type': 'MONEYLINE',
+                        'event': current_event
                     })
                     if not result['bet_type']: result['bet_type'] = 'Straight'
                     continue
-            # Attach to last selection
             if result['selections']:
                 result['selections'][-1]['market'] = text.strip()
             continue
@@ -316,31 +338,71 @@ def parse_draftkings(lines: list[dict]) -> dict:
                 result['selections'][-1]['market'] = text.strip()
             continue
 
-        # ── Fix 3: CASH OUT line with odds — "NY Yankees CASH OUT -219"
+        # ── CASH OUT line with odds
         if 'cash out' in text.lower() and not result['total_odds']:
             odds_m = re.search(r'[+-]\d{2,}', text)
             if odds_m:
                 result['total_odds'] = odds_m.group(0)
             continue
 
-        # ── Matchup: "LA Dodgers @ TOR Blue Jays • Today 2:07PM"
-        if re.search(r'\s@\s', text):
-            matchup_m = re.search(r'([A-Z].*?@[^•\u00ab\u00bb]+)', text)
-            event = matchup_m.group(1).strip() if matchup_m else text.strip()
-            event = re.sub(r'[\u00ab\u00bb\s]+$', '', event).strip()
-            if result['selections'] and not result['selections'][-1].get('event'):
-                result['selections'][-1]['event'] = event
-            continue
-
     # Filter out fake header legs
     result['selections'] = [s for s in result['selections'] if not is_fake_leg(s)]
+
+    # Backfill empty events — scan texts for team pairs and build events
+    # DK layout: selections appear BEFORE team names, so we need post-processing
+    # Team lines: "ATL BRAVES" or "ARI DIAMONDBACKS Apr 2, 2026, 9:40 PM"
+    team_events = []
+    team_buf = []
+    for text in texts:
+        # Extract team name (strip any trailing date)
+        tm = re.match(r'^([A-Z]{2,4}\s+[A-Z][A-Z\s]+?)(?:\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)|\s*$)', text.strip())
+        if tm:
+            team_buf.append(tm.group(1).strip())
+            if len(team_buf) == 2:
+                team_events.append(f"{team_buf[0]} vs {team_buf[1]}")
+                team_buf = []
+        elif re.search(r'\s@\s', text):
+            matchup_m = re.search(r'([A-Z].*?@[^•\u00ab\u00bb]+)', text)
+            if matchup_m:
+                team_events.append(re.sub(r'[\u00ab\u00bb\s]+$', '', matchup_m.group(1)).strip())
+            team_buf = []
+
+    # Assign events to selections — distribute team_events in order to empty selections
+    if team_events:
+        event_idx = 0
+        sels_without_event = [s for s in result['selections'] if not s.get('event')]
+        # If we have same number of events as SGP sub-legs, map them
+        # Otherwise just fill sequentially
+        for sel in result['selections']:
+            if not sel.get('event') and event_idx < len(team_events):
+                sel['event'] = team_events[event_idx]
+            # Advance to next event after seeing all selections for this matchup
+            # Heuristic: advance when we've filled a group (use leg structure)
+
+        # Better: distribute events evenly across selections
+        if len(team_events) >= 2 and sels_without_event:
+            sels_per_event = max(1, len(sels_without_event) // len(team_events))
+            idx = 0
+            for ei, event in enumerate(team_events):
+                for _ in range(sels_per_event):
+                    if idx < len(sels_without_event):
+                        sels_without_event[idx]['event'] = event
+                        idx += 1
+            # Assign remaining to last event
+            while idx < len(sels_without_event):
+                sels_without_event[idx]['event'] = team_events[-1]
+                idx += 1
+        elif len(team_events) == 1:
+            for sel in result['selections']:
+                if not sel.get('event'):
+                    sel['event'] = team_events[0]
 
     # Extract leg count from bet_type
     leg_count_m = re.search(r'(\d+)\s*Pick', result.get('bet_type', ''), re.I)
     if leg_count_m:
         result['leg_count'] = int(leg_count_m.group(1))
 
-    # Fix 4: Detect sport from all text
+    # Detect sport from all text
     all_text = ' '.join(l['text'] for l in lines)
     result['sport'] = detect_sport_from_text(all_text)
 
