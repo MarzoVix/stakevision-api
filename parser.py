@@ -1137,3 +1137,109 @@ def parse_onyx(lines: list[dict]) -> dict:
             result['total_odds'] = prop_m.group(4)
             i += 1; continue
 
+        # ── Format 2: Market line — "Will There Be Overtime: Yes" ──
+        market_m = re.match(r'^(.+?):\s*(Yes|No|Over|Under)$', text, re.I)
+        if market_m:
+            current_sel = {
+                'market': market_m.group(1).strip(),
+                'pick': market_m.group(2),
+            }
+            result['selections'].append(current_sel)
+            i += 1; continue
+
+        # ── Format 3: Market description ──
+        if re.match(r'^(Player|Team)', text, re.I) or re.search(r'(Double|Triple|Goals|Assists)', text, re.I):
+            if current_sel:
+                current_sel['market'] = text.strip()
+            i += 1; continue
+
+        # ── Total odds standalone ──
+        if re.match(r'^[+-]\d{3,}$', text.strip()):
+            if not result['total_odds']:
+                result['total_odds'] = text.strip()
+            i += 1; continue
+
+        # ── Format 1: Selection with spread+odds ──
+        sel_m = re.match(
+            r'^[A-Za-z]?\s*(\d+)\s+([A-Za-z][A-Za-z\s]+?)\s+([+-][\d\.]+)\s+([+-]\d+)$', text.strip()
+        )
+        if sel_m:
+            current_sel = {
+                'team': sel_m.group(2).strip(),
+                'line': sel_m.group(3),
+                'odds': sel_m.group(4),
+            }
+            result['selections'].append(current_sel)
+            if not result['bet_type']: result['bet_type'] = 'Parlay'
+            i += 1; continue
+
+        # ── Format 1: Selection moneyline ──
+        ml_m = re.match(
+            r'^[A-Za-z]?\s*(\d+)\s+([A-Za-z][A-Za-z\s]+?)\s+([+-]\d+)$', text.strip()
+        )
+        if ml_m:
+            current_sel = {
+                'team': ml_m.group(2).strip(),
+                'odds': ml_m.group(3),
+            }
+            result['selections'].append(current_sel)
+            if not result['bet_type']: result['bet_type'] = 'Parlay'
+            i += 1; continue
+
+        # ── Market type ──
+        if re.match(r'^(SPREAD|TO\s*WIN|MONEYLINE|TOTAL)', text.strip(), re.I):
+            if current_sel:
+                current_sel['market'] = text.strip()
+            i += 1; continue
+
+        # ── Matchup ──
+        if re.search(r'\s(@|vs\.?\s)', text, re.I):
+            if current_sel:
+                current_sel['event'] = text.strip()
+            elif result['selections']:
+                result['selections'][-1]['event'] = text.strip()
+            i += 1; continue
+
+        # ── Score line: "CHI Bulls NYK Knicks" + "96 VS 136" ──
+        if re.search(r'\d+\s+VS\s+\d+', text, re.I):
+            if current_sel:
+                current_sel['score'] = text.strip()
+            i += 1; continue
+
+        # ── Date/time ──
+        if re.search(r'(Today|Tomorrow|Final|\d+:\d+\s*(am|pm|AM|PM)|\w+\s+\d+,\s*\d{4})', text, re.I):
+            if current_sel:
+                current_sel['date'] = re.sub(r'^[a-z]\d?\s+', '', text).strip()
+            i += 1; continue
+
+        i += 1
+
+    return result
+
+# ── Main parse function ───────────────────────────────────────────────────────
+def parse_slip(img_path: str, sportsbook: str = None) -> dict:
+    lines = extract_lines(img_path)
+    if not lines:
+        return {'error': 'No text detected'}
+
+    # Use provided sportsbook or fall back to auto-detection
+    book = sportsbook or detect_sportsbook(lines)
+
+    parsers = {
+        'DraftKings': parse_draftkings,
+        'FanDuel': parse_fanduel,
+        'PrizePicks': parse_prizepicks,
+        'Underdog': parse_underdog,
+        'BetMGM': parse_betmgm,
+        'Fanatics': parse_fanatics,
+        'Onyx': parse_onyx,
+    }
+
+    parser = parsers.get(book)
+    if parser:
+        result = parser(lines)
+    else:
+        result = {'sportsbook': book, 'raw_lines': [l['text'] for l in lines]}
+
+    return result
+
