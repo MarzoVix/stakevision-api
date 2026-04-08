@@ -255,12 +255,25 @@ def parse_draftkings(lines: list[dict]) -> dict:
 
         # ── Matchup: "LA Dodgers @ TOR Blue Jays • Today 2:07PM"
         if re.search(r'\s@\s', text):
-            # Extract the matchup part (before bullet/time)
-            matchup_m = re.search(r'([A-Z].*?@[^•]+)', text)
+            matchup_m = re.search(r'([A-Z].*?@[^•\u00ab\u00bb]+)', text)
             event = matchup_m.group(1).strip() if matchup_m else text.strip()
+            event = re.sub(r'[\u00ab\u00bb\s]+$', '', event).strip()
             if result['selections'] and not result['selections'][-1].get('event'):
                 result['selections'][-1]['event'] = event
             continue
+
+    # Filter out fake header legs (e.g. player="2 Pick Parlay")
+    result['selections'] = [
+        s for s in result['selections']
+        if not re.match(r'^\d+\s*(Pick|Leg)\s*(Parlay|SGP)', s.get('player', ''), re.I)
+        and not re.match(r'^\d+\s*(Pick|Leg)\s*(Parlay|SGP)', s.get('stat', ''), re.I)
+        and not re.match(r'^\d+\s*(Pick|Leg)\s*(Parlay|SGP)', s.get('market', ''), re.I)
+    ]
+
+    # Extract leg count from bet_type
+    leg_count_m = re.search(r'(\d+)\s*Pick', result.get('bet_type', ''), re.I)
+    if leg_count_m:
+        result['leg_count'] = int(leg_count_m.group(1))
 
     return result
 
