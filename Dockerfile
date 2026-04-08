@@ -6,18 +6,15 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libxext6 \
     libgomp1 \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
-
-# Install headless opencv FIRST, then paddleocr with --no-deps to prevent
-# it from pulling in opencv-python/opencv-contrib-python
-RUN pip install --no-cache-dir opencv-python-headless==4.10.0.84 && \
-    pip install --no-cache-dir paddlepaddle==2.6.2 && \
-    pip install --no-cache-dir --no-deps paddleocr==2.9.1 && \
-    pip install --no-cache-dir pyclipper shapely scikit-image imgaug lmdb lxml beautifulsoup4 rapidfuzz python-docx && \
-    pip install --no-cache-dir fastapi uvicorn python-multipart Pillow
+RUN pip install --no-cache-dir opencv-python-headless==4.10.0.84
+RUN pip install --no-cache-dir --no-deps paddleocr==2.9.1
+RUN pip install --no-cache-dir paddlepaddle==2.6.2 pyclipper shapely scikit-image imgaug lmdb lxml beautifulsoup4 rapidfuzz python-docx
+RUN pip install --no-cache-dir fastapi uvicorn python-multipart Pillow
 
 COPY . .
 EXPOSE 8000
