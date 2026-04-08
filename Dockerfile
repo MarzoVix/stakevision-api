@@ -10,25 +10,20 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+COPY constraints.txt .
+COPY requirements.txt .
 
-# Pin numpy 1.x FIRST - imgaug uses np.sctypes which was removed in numpy 2.0
-# No version of imgaug on PyPI fixes this, so numpy MUST stay <2
-RUN pip install --no-cache-dir "numpy==1.26.4"
+# Use -c constraints.txt on EVERY pip install to force numpy==1.26.4
+# This cannot be overridden by any dependency
+ENV PIP_CONSTRAINT=/app/constraints.txt
 
-# Headless opencv (no libGL needed)
+RUN pip install --no-cache-dir numpy==1.26.4
 RUN pip install --no-cache-dir opencv-python-headless==4.10.0.84
-
-# PaddlePaddle engine
 RUN pip install --no-cache-dir paddlepaddle==2.6.2
-
-# PaddleOCR without deps (prevents opencv-python override)
-# Then install its deps manually, with numpy already locked to 1.26.4
-RUN pip install --no-cache-dir --no-deps paddleocr==2.9.1 && \
-    pip install --no-cache-dir \
+RUN pip install --no-cache-dir --no-deps paddleocr==2.9.1
+RUN pip install --no-cache-dir \
     imgaug requests pyclipper shapely scikit-image lmdb lxml \
     beautifulsoup4 rapidfuzz python-docx pyyaml tqdm fire cython
-
-# App deps
 RUN pip install --no-cache-dir fastapi uvicorn python-multipart Pillow
 
 COPY . .
