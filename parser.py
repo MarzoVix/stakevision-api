@@ -222,6 +222,10 @@ def parse_draftkings(lines: list[dict]) -> dict:
     groups = group_lines(lines, threshold=25)
     texts = [row_text(g) for g in groups]
 
+    print(f"[DK] Total OCR rows: {len(texts)}")
+    for idx, t in enumerate(texts):
+        print(f"[DK] row {idx}: {t!r}")
+
     result = {'sportsbook': 'DraftKings', 'bet_type': '', 'total_odds': '',
               'wager': '', 'payout': '', 'status': '', 'selections': []}
 
@@ -241,10 +245,13 @@ def parse_draftkings(lines: list[dict]) -> dict:
                 result['selections'][-1]['event'] = current_event
             i += 1; continue
 
-        # Skip team name lines and dates — handled in post-processing
-        if re.match(r'^[A-Z]{2,4}\s+[A-Z]{2,}', text.strip()):
-            i += 1; continue
+        # Skip date lines
         if re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d', text, re.I):
+            i += 1; continue
+
+        # Skip team name lines ONLY if they don't contain a stat keyword
+        # (avoids skipping "CJ ABRAMS Hits" or "JP SEARS Strikeouts")
+        if re.match(r'^[A-Z]{2,4}\s+[A-Z]{2,}', text.strip()) and not _is_stat_line(text):
             i += 1; continue
 
         # Status (standalone or at end of line like "Won")
@@ -315,13 +322,14 @@ def parse_draftkings(lines: list[dict]) -> dict:
         # Player + stat line (H+R+RBI type props)
         if _is_stat_line(text):
             player, stat = _extract_player_stat(text)
-            if is_valid_player_name(player):
-                result['selections'].append({
-                    'player': player, 'stat': stat,
-                    'pick': current_pick or 'Over',
-                    'line': current_line, 'pick_type': 'PROP',
-                    'event': current_event
-                })
+            # Always add the leg — even if player name looks odd, the stat is valid
+            result['selections'].append({
+                'player': player if is_valid_player_name(player) else player.strip(),
+                'stat': stat,
+                'pick': current_pick or 'Over',
+                'line': current_line, 'pick_type': 'PROP',
+                'event': current_event
+            })
             current_line = ''
             current_pick = ''
             i += 1; continue
