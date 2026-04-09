@@ -125,6 +125,12 @@ def detect_sportsbook(lines: list[dict]) -> str:
 
 # ── Shared Utilities ──────────────────────────────────────────────────────────
 
+def clean_event(text: str) -> str:
+    """Strip trailing time stamps and ellipsis from event/matchup strings."""
+    text = re.sub(r'\s*\d{1,2}:\d{2}\s*(AM|PM|am|pm)\s*(ET|CT|MT|PT)?\s*$', '', text)
+    text = re.sub(r'\s*\.{2,}\s*$', '', text)
+    return text.strip()
+
 NOISE_WORDS = {'TO', 'No', 'Yes', 'Out', 'Win', 'Bet', 'The', 'For', 'All',
                'Or', 'At', 'In', 'On', 'If', 'An', 'Up', 'My', 'So', 'Do'}
 
@@ -1319,5 +1325,9 @@ def parse_slip(img_path: str, sportsbook: str = None) -> dict:
     else:
         result = {'sportsbook': book, 'raw_lines': [l['text'] for l in lines]}
 
-    return result
+    # Clean up event fields across all selections (strip time stamps, ellipsis)
+    for sel in result.get('selections', []) + result.get('picks', []):
+        if sel.get('event'):
+            sel['event'] = clean_event(sel['event'])
 
+    return result
