@@ -139,16 +139,7 @@ def is_valid_player_name(name: str) -> bool:
 
 def is_fake_leg(sel: dict) -> bool:
     combined = f"{sel.get('player','') or ''} {sel.get('stat','') or ''} {sel.get('market','') or ''}"
-    if re.search(r'\d+\s*(Pick|Leg)\s*(Parlay|SGP)', combined, re.I):
-        return True
-    # Reject legs where player looks like a matchup or stat contains payout/wager noise
-    player = sel.get('player', '') or ''
-    stat = sel.get('stat', '') or ''
-    if re.search(r'@', player):
-        return True
-    if re.search(r'(Payout|Wager|To Pay|Paid|Cash Out|Accept)', stat, re.I):
-        return True
-    return False
+    return bool(re.search(r'\d+\s*(Pick|Leg)\s*(Parlay|SGP)', combined, re.I))
 
 SPORT_TEAMS = {
     'MLB': ['Cardinals', 'Yankees', 'Red Sox', 'Cubs', 'Dodgers', 'Mets', 'Braves',
@@ -182,38 +173,9 @@ def detect_sport_from_text(text: str) -> str:
     return ''
 
 # Stat keywords used to identify player prop lines (not team/date lines)
-DK_STAT_WORDS = [
-    # MLB
-    'Hits', 'Runs', 'RBI', 'RBl', 'RBIs', 'Runs + RBI', 'HR', 'Home Run', 'Home Runs',
-    'Singles', 'Doubles', 'Triples', 'Stolen Bases', 'Total Bases', 'Walks',
-    'Strikeouts', 'Strikeouts Thrown', 'Earned Runs', 'Innings Pitched',
-    'Bases', 'Outs', 'Pitching Outs',
-    # NBA
-    'Points', 'Rebounds', 'Assists', 'Steals', 'Blocks', 'Turnovers',
-    'Three Pointers Made', 'Three Pointers', '3-Pointers Made',
-    '3-Pointers', '3 Pointers Made', '3 Pointers',
-    'Double Double', 'Triple Double',
-    # NFL
-    'Touchdowns', 'Yards', 'Passing Yards', 'Rushing Yards', 'Receiving Yards',
-    'Receptions', 'Tackles', 'Sacks', 'Interceptions',
-    # NHL
-    'Goals', 'Saves', 'Shots on Goal', 'Blocked Shots', 'Faceoffs Won',
-    # O/U variants (DK appends O/U to stat names)
-    'Points O/U', 'Assists O/U', 'Rebounds O/U', 'Hits O/U',
-    'Runs O/U', 'Strikeouts O/U', 'Singles O/U', 'Doubles O/U',
-    'RBIs O/U', 'Strikeouts Thrown O/U', 'Home Runs O/U',
-    'Stolen Bases O/U', 'Total Bases O/U', 'Walks O/U',
-    'Three Pointers Made O/U', 'Goals O/U', 'Saves O/U',
-]
-
-# Game total / market keywords that appear as standalone lines (no player name)
-DK_GAME_MARKETS = [
-    r'Runs\s*[-–]\s*1st\s*Inning', r'Runs\s*[-–]\s*\d+\w*\s*Inning',
-    r'Total\s+Runs', r'Total\s+Points', r'Total\s+Goals',
-    r'1st\s*Half', r'2nd\s*Half', r'1st\s*Quarter',
-    r'Alternate\s+Total', r'Alternate\s+Run\s+Line',
-    r'Team\s+Total',
-]
+DK_STAT_WORDS = ['Hits', 'Runs + RBI', 'RBI', 'RBl', 'HR', 'Home Run',
+                 'Points', 'Rebounds', 'Assists', 'Touchdowns', 'Yards',
+                 'Goals', 'Saves', 'Strikeouts', 'Bases', 'Outs']
 
 def _normalize_text(text: str) -> str:
     """Normalize common OCR errors."""
@@ -249,49 +211,32 @@ def parse_draftkings(lines: list[dict]) -> dict:
     groups = group_lines(lines, threshold=25)
     texts = [row_text(g) for g in groups]
 
-    print(f"[DK] Total OCR rows: {len(texts)}")
-    for idx, t in enumerate(texts):
-        print(f"[DK] row {idx}: {t!r}")
-
     result = {'sportsbook': 'DraftKings', 'bet_type': '', 'total_odds': '',
               'wager': '', 'payout': '', 'status': '', 'selections': []}
 
     current_line = ''
     current_event = ''
-    current_pick = ''   # Over/Under direction for next leg
-    sgp_legs_remaining = 0  # Track how many SGP legs we still expect
-    i = 0
-    while i < len(texts):
-        text = texts[i]
-
+    for i, text in enumerate(texts):
         # ── Matchup with @: "LA Dodgers @ TOR Blue Jays • Today 2:07PM"
+        # Set current_event for @ patterns (these appear inline with selections)
         if re.search(r'\s@\s', text):
-            matchup_m = re.search(r'([A-Z].*?@[^•\u00ab\u00bb:]+)', text)
-            new_event = matchup_m.group(1).strip() if matchup_m else text.strip()
-            new_event = re.sub(r'[\u00ab\u00bb\s]+$', '', new_event).strip()
-            # Backfill: update any recent selections that have no event or the wrong event
-            # (non-SGP legs that appear before their matchup)
-            if result['selections']:
-                last = result['selections'][-1]
-                if not last.get('event') or last.get('_needs_event'):
-                    last['event'] = new_event
-                    last.pop('_needs_event', None)
-            current_event = new_event
-            i += 1; continue
+            matchup_m = re.search(r'([A-Z].*?@[^•\u00ab\u00bb]+)', text)
+            current_event = matchup_m.group(1).strip() if matchup_m else text.strip()
+            current_event = re.sub(r'[\u00ab\u00bb\s]+$', '', current_event).strip()
+            if result['selections'] and not result['selections'][-1].get('event'):
+                result['selections'][-1]['event'] = current_event
+            continue
 
-        # Skip date lines
+        # Skip team name lines and dates — handled in post-processing
+        if re.match(r'^[A-Z]{2,4}\s+[A-Z]{2,}', text.strip()):
+            continue
         if re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d', text, re.I):
-            i += 1; continue
-
-        # Skip team name lines ONLY if they don't contain a stat keyword
-        # (avoids skipping "CJ ABRAMS Hits" or "JP SEARS Strikeouts")
-        if re.match(r'^[A-Z]{2,4}\s+[A-Z]{2,}', text.strip()) and not _is_stat_line(text):
-            i += 1; continue
+            continue
 
         # Status (standalone or at end of line like "Won")
         if re.match(r'^(Open|Won|Lost|Push|Settled|Void)$', text, re.I):
             result['status'] = text.strip()
-            i += 1; continue
+            continue
 
         # Bet type + odds — only set once
         if not result['bet_type']:
@@ -301,7 +246,7 @@ def parse_draftkings(lines: list[dict]) -> dict:
                 all_odds = re.findall(r'[+-]\d{2,}', text)
                 if all_odds:
                     result['total_odds'] = all_odds[-1]
-                i += 1; continue
+                continue
 
         # Wager + payout
         wager_m = re.search(r'Wager[:\s]+\$?([\d,\.]+)', text, re.I)
@@ -309,80 +254,27 @@ def parse_draftkings(lines: list[dict]) -> dict:
         if wager_m: result['wager'] = wager_m.group(1).replace(',', '')
         if pay_m: result['payout'] = pay_m.group(1).replace(',', '')
 
-        # Sub-SGP header: "[SGP] 3 Pick Parlay" or "3 Pick SGP | +400"
-        sgp_header_m = re.search(r'(\d+)\s*Pick\s*(SGP|Parlay)', text, re.I)
-        if sgp_header_m and result['bet_type']:
-            # This is a sub-group header, not the main bet type
-            sgp_legs_remaining = int(sgp_header_m.group(1))
-            i += 1; continue
+        # Sub-leg odds: "Pick SGP | +400"
+        if re.match(r'\d*\s*Pick\s*SGP\s*[|I]\s*[+-]\d+', text, re.I):
+            continue
 
         # Line value: standalone "3+" or "2.5"
         line_m = re.match(r'^(\d+\.?\d*)\+?$', text.strip())
         if line_m:
             current_line = line_m.group(1) + '+'
-            i += 1; continue
-
-        # ── Over/Under + line: "Over 0.5" or "Under 3.5" ──
-        ou_m = re.match(r'^(Over|Under)\s+([\d\.]+)', text, re.I)
-        if ou_m:
-            pick_dir = ou_m.group(1).capitalize()
-            pick_line = ou_m.group(2)
-            # Look ahead: next line should be the market (e.g. "Runs - 1st Inning")
-            market = ''
-            event = ''
-            consumed = 0  # extra lines consumed by lookahead
-            if i + 1 < len(texts):
-                next_text = texts[i + 1]
-                # Check if next line is a game market
-                if any(re.search(pat, next_text, re.I) for pat in DK_GAME_MARKETS):
-                    market = next_text.strip()
-                    consumed = 1
-            # If we found a game market, also look for event on the line after
-            if market and i + 2 < len(texts):
-                maybe_event = texts[i + 2]
-                if re.search(r'(@|vs\.?|at\b)', maybe_event, re.I):
-                    event = maybe_event.strip()
-                    consumed = 2
-            if market:
-                is_sgp_leg = sgp_legs_remaining > 0
-                if sgp_legs_remaining > 0:
-                    sgp_legs_remaining -= 1
-                sel = {
-                    'player': '', 'stat': market, 'pick': pick_dir,
-                    'line': pick_line, 'pick_type': 'TOTAL',
-                    'event': (event or current_event) if is_sgp_leg else (event or ''),
-                }
-                if not is_sgp_leg and not event:
-                    sel['_needs_event'] = True
-                result['selections'].append(sel)
-                i += 1 + consumed; continue
-            else:
-                # No game market found — store pick direction + line for next stat line
-                current_pick = pick_dir
-                current_line = pick_line
-                i += 1; continue
+            continue
 
         # Player + stat line (H+R+RBI type props)
         if _is_stat_line(text):
             player, stat = _extract_player_stat(text)
-            # Track SGP membership: if SGP legs exhausted, this is a non-SGP leg
-            # whose matchup may appear AFTER it — mark for backfill
-            is_sgp_leg = sgp_legs_remaining > 0
-            if sgp_legs_remaining > 0:
-                sgp_legs_remaining -= 1
-            sel = {
-                'player': player if is_valid_player_name(player) else player.strip(),
-                'stat': stat,
-                'pick': current_pick or 'Over',
-                'line': current_line, 'pick_type': 'PROP',
-                'event': current_event if is_sgp_leg else '',
-            }
-            if not is_sgp_leg:
-                sel['_needs_event'] = True
-            result['selections'].append(sel)
+            if is_valid_player_name(player):
+                result['selections'].append({
+                    'player': player, 'stat': stat, 'pick': 'Over',
+                    'line': current_line, 'pick_type': 'PROP',
+                    'event': current_event
+                })
             current_line = ''
-            current_pick = ''
-            i += 1; continue
+            continue
 
         # ── Live bet: "Strike/Foul 1 -120 Won"
         live_m = re.match(r'^(.+?)\s+(\d+)\s+([+-]\d+)\s+(Won|Lost|Push)', text, re.I)
@@ -395,15 +287,15 @@ def parse_draftkings(lines: list[dict]) -> dict:
             result['status'] = live_m.group(4)
             if not result['total_odds']: result['total_odds'] = live_m.group(3)
             if not result['bet_type']: result['bet_type'] = 'Live'
-            i += 1; continue
+            continue
 
         # ── Live bet context: "Live Yoan Moncada - 5th Plate Appearance..."
         if text.startswith('Live ') and result['selections']:
             current_event = text[5:].strip()
             result['selections'][-1]['event'] = current_event
-            i += 1; continue
+            continue
 
-        # ── Moneyline leg (with inline odds): "PHI Phillies 168"
+        # ── Moneyline leg
         ml_m = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z]{2,4})\s+([A-Za-z\s]+?)\s+(-?\d+)$', text.strip())
         if ml_m and i + 1 < len(texts) and re.match(r'^(Moneyline|Run Line|Spread)', texts[i+1], re.I):
             result['selections'].append({
@@ -411,23 +303,10 @@ def parse_draftkings(lines: list[dict]) -> dict:
                 'odds': ml_m.group(3), 'pick_type': 'MONEYLINE',
                 'event': current_event
             })
-            if sgp_legs_remaining > 0: sgp_legs_remaining -= 1
             if not result['bet_type']: result['bet_type'] = 'Parlay'
-            i += 1; continue
+            continue
 
-        # ── Moneyline leg (no inline odds): "OKC Thunder" then "Moneyline"
-        ml_no_odds = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z]{2,4})\s+([A-Za-z\s]+?)\s*$', text.strip())
-        if ml_no_odds and i + 1 < len(texts) and re.match(r'^Moneyline', texts[i+1], re.I):
-            result['selections'].append({
-                'team': f"{ml_no_odds.group(1)} {ml_no_odds.group(2).strip()}",
-                'pick_type': 'MONEYLINE', 'market': 'Moneyline',
-                'event': current_event
-            })
-            if sgp_legs_remaining > 0: sgp_legs_remaining -= 1
-            if not result['bet_type']: result['bet_type'] = 'Parlay'
-            i += 2; continue
-
-        # ── Spread/Run Line leg (with inline odds): "OKC Thunder -5.5 -110"
+        # ── Spread/Run Line leg
         spread_m = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z][A-Za-z\s]+?)\s+([+-][\d\.]+)\s+(-?\d+)$', text.strip())
         if spread_m and i + 1 < len(texts) and re.match(r'^(Run Line|Spread)', texts[i+1], re.I):
             result['selections'].append({
@@ -435,22 +314,8 @@ def parse_draftkings(lines: list[dict]) -> dict:
                 'odds': spread_m.group(3), 'pick_type': 'SPREAD',
                 'event': current_event
             })
-            if sgp_legs_remaining > 0: sgp_legs_remaining -= 1
             if not result['bet_type']: result['bet_type'] = 'Parlay'
-            i += 1; continue
-
-        # ── Spread/Run Line leg (no inline odds): "OKC Thunder -5.5" then "Spread Alternate"
-        spread_no_odds = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z][A-Za-z\s]+?)\s+([+-][\d\.]+)\s*$', text.strip())
-        if spread_no_odds and i + 1 < len(texts) and re.match(r'^(Run Line|Spread|Alternate)', texts[i+1], re.I):
-            market = texts[i+1].strip()
-            result['selections'].append({
-                'team': spread_no_odds.group(1).strip(), 'line': spread_no_odds.group(2),
-                'pick_type': 'SPREAD', 'market': market,
-                'event': current_event
-            })
-            if sgp_legs_remaining > 0: sgp_legs_remaining -= 1
-            if not result['bet_type']: result['bet_type'] = 'Parlay'
-            i += 2; continue
+            continue
 
         # ── Single bet moneyline — "NY Yankees" then "Moneyline"
         if re.match(r'^Moneyline$', text.strip(), re.I):
@@ -465,9 +330,7 @@ def parse_draftkings(lines: list[dict]) -> dict:
                     continue
             if result['selections']:
                 result['selections'][-1]['market'] = text.strip()
-            i += 1; continue
-
-        i += 1
+            continue
 
         # Market type label (attach to last selection)
         if re.match(r'^(Run Line|Spread|Total)', text, re.I):
@@ -534,10 +397,6 @@ def parse_draftkings(lines: list[dict]) -> dict:
                 if not sel.get('event'):
                     sel['event'] = team_events[0]
 
-    # Clean up internal flags
-    for sel in result['selections']:
-        sel.pop('_needs_event', None)
-
     # Extract leg count from bet_type
     leg_count_m = re.search(r'(\d+)\s*Pick', result.get('bet_type', ''), re.I)
     if leg_count_m:
@@ -563,6 +422,7 @@ def parse_fanduel(lines: list[dict]) -> dict:
     result = {'sportsbook': 'FanDuel', 'bet_type': '', 'total_odds': '',
               'wager': '', 'payout': '', 'status': '', 'selections': []}
 
+    current_event = ''
     i = 0
     while i < len(texts):
         text = texts[i]
@@ -751,8 +611,9 @@ def parse_fanduel(lines: list[dict]) -> dict:
             i += 2; continue
 
         # ── Pattern 8: "Team+/-spread" or "Team +/-spread odds" → "SPREAD/PUCKLINE"
+        # Handles "USA (W)-2.5" / "ALTERNATE PUCK LINE (INCL.OT/SO"
         spread_m = re.match(r'^(.+?)\s*([+-][\d\.]+)\s*([+-]\d+)?$', text.strip())
-        if spread_m and i + 1 < len(texts) and re.match(r'^(Spread|PUCKLINE|Run Line)', texts[i+1], re.I):
+        if spread_m and i + 1 < len(texts) and re.search(r'(Spread|PUCK\s*LINE|Run Line|ALT.*LINE)', texts[i+1], re.I):
             result['selections'].append({
                 'team': spread_m.group(1).strip(), 'line': spread_m.group(2),
                 'odds': spread_m.group(3) or '', 'market': texts[i+1].strip()
@@ -783,14 +644,17 @@ def parse_fanduel(lines: list[dict]) -> dict:
         if re.match(r'^(PROFIT BOOST|If the bet|Reuse|Share|Follow|Cash out|BETID)', text, re.I):
             i += 1; continue
 
-        # ── Matchup line (attach to last selection) ──
-        if re.search(r'\s(at|vs\.?|@)\s', text, re.I) and result['selections']:
-            if not result['selections'][-1].get('event'):
-                result['selections'][-1]['event'] = text.strip()
+        # ── Matchup line (set current_event + attach to last selection) ──
+        if re.search(r'\s(at|vs\.?|@)\s', text, re.I):
+            current_event = text.strip()
+            if result['selections'] and not result['selections'][-1].get('event'):
+                result['selections'][-1]['event'] = current_event
             i += 1; continue
 
         # ── Matchup line alt: "TEAM1 TEAM2 date" like "UMASS MIAMI OH Mar 12..."
         if re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d', text, re.I):
+            if not current_event:
+                current_event = text.strip()
             if result['selections'] and not result['selections'][-1].get('event'):
                 result['selections'][-1]['event'] = text.strip()
             i += 1; continue
@@ -807,6 +671,16 @@ def parse_fanduel(lines: list[dict]) -> dict:
             i += 2; continue
 
         i += 1
+
+    # Backfill event on all selections that don't have one
+    if current_event:
+        for sel in result['selections']:
+            if not sel.get('event'):
+                sel['event'] = current_event
+
+    # Detect sport
+    all_text = ' '.join(l['text'] for l in lines)
+    result['sport'] = detect_sport_from_text(all_text)
 
     return result
 
@@ -1446,3 +1320,4 @@ def parse_slip(img_path: str, sportsbook: str = None) -> dict:
         result = {'sportsbook': book, 'raw_lines': [l['text'] for l in lines]}
 
     return result
+
