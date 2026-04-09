@@ -403,7 +403,7 @@ def parse_draftkings(lines: list[dict]) -> dict:
             result['selections'][-1]['event'] = current_event
             i += 1; continue
 
-        # ── Moneyline leg
+        # ── Moneyline leg (with inline odds): "PHI Phillies 168"
         ml_m = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z]{2,4})\s+([A-Za-z\s]+?)\s+(-?\d+)$', text.strip())
         if ml_m and i + 1 < len(texts) and re.match(r'^(Moneyline|Run Line|Spread)', texts[i+1], re.I):
             result['selections'].append({
@@ -411,10 +411,23 @@ def parse_draftkings(lines: list[dict]) -> dict:
                 'odds': ml_m.group(3), 'pick_type': 'MONEYLINE',
                 'event': current_event
             })
+            if sgp_legs_remaining > 0: sgp_legs_remaining -= 1
             if not result['bet_type']: result['bet_type'] = 'Parlay'
             i += 1; continue
 
-        # ── Spread/Run Line leg
+        # ── Moneyline leg (no inline odds): "OKC Thunder" then "Moneyline"
+        ml_no_odds = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z]{2,4})\s+([A-Za-z\s]+?)\s*$', text.strip())
+        if ml_no_odds and i + 1 < len(texts) and re.match(r'^Moneyline', texts[i+1], re.I):
+            result['selections'].append({
+                'team': f"{ml_no_odds.group(1)} {ml_no_odds.group(2).strip()}",
+                'pick_type': 'MONEYLINE', 'market': 'Moneyline',
+                'event': current_event
+            })
+            if sgp_legs_remaining > 0: sgp_legs_remaining -= 1
+            if not result['bet_type']: result['bet_type'] = 'Parlay'
+            i += 2; continue
+
+        # ── Spread/Run Line leg (with inline odds): "OKC Thunder -5.5 -110"
         spread_m = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z][A-Za-z\s]+?)\s+([+-][\d\.]+)\s+(-?\d+)$', text.strip())
         if spread_m and i + 1 < len(texts) and re.match(r'^(Run Line|Spread)', texts[i+1], re.I):
             result['selections'].append({
@@ -422,8 +435,22 @@ def parse_draftkings(lines: list[dict]) -> dict:
                 'odds': spread_m.group(3), 'pick_type': 'SPREAD',
                 'event': current_event
             })
+            if sgp_legs_remaining > 0: sgp_legs_remaining -= 1
             if not result['bet_type']: result['bet_type'] = 'Parlay'
             i += 1; continue
+
+        # ── Spread/Run Line leg (no inline odds): "OKC Thunder -5.5" then "Spread Alternate"
+        spread_no_odds = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z][A-Za-z\s]+?)\s+([+-][\d\.]+)\s*$', text.strip())
+        if spread_no_odds and i + 1 < len(texts) and re.match(r'^(Run Line|Spread|Alternate)', texts[i+1], re.I):
+            market = texts[i+1].strip()
+            result['selections'].append({
+                'team': spread_no_odds.group(1).strip(), 'line': spread_no_odds.group(2),
+                'pick_type': 'SPREAD', 'market': market,
+                'event': current_event
+            })
+            if sgp_legs_remaining > 0: sgp_legs_remaining -= 1
+            if not result['bet_type']: result['bet_type'] = 'Parlay'
+            i += 2; continue
 
         # ── Single bet moneyline — "NY Yankees" then "Moneyline"
         if re.match(r'^Moneyline$', text.strip(), re.I):
