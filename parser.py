@@ -259,17 +259,24 @@ def parse_draftkings(lines: list[dict]) -> dict:
     current_line = ''
     current_event = ''
     current_pick = ''   # Over/Under direction for next leg
+    sgp_legs_remaining = 0  # Track how many SGP legs we still expect
     i = 0
     while i < len(texts):
         text = texts[i]
 
         # ── Matchup with @: "LA Dodgers @ TOR Blue Jays • Today 2:07PM"
         if re.search(r'\s@\s', text):
-            matchup_m = re.search(r'([A-Z].*?@[^•\u00ab\u00bb]+)', text)
-            current_event = matchup_m.group(1).strip() if matchup_m else text.strip()
-            current_event = re.sub(r'[\u00ab\u00bb\s]+$', '', current_event).strip()
-            if result['selections'] and not result['selections'][-1].get('event'):
-                result['selections'][-1]['event'] = current_event
+            matchup_m = re.search(r'([A-Z].*?@[^•\u00ab\u00bb:]+)', text)
+            new_event = matchup_m.group(1).strip() if matchup_m else text.strip()
+            new_event = re.sub(r'[\u00ab\u00bb\s]+$', '', new_event).strip()
+            # Backfill: update any recent selections that have no event or the wrong event
+            # (non-SGP legs that appear before their matchup)
+            if result['selections']:
+                last = result['selections'][-1]
+                if not last.get('event') or last.get('_needs_event'):
+                    last['event'] = new_event
+                    last.pop('_needs_event', None)
+            current_event = new_event
             i += 1; continue
 
         # Skip date lines
@@ -302,8 +309,11 @@ def parse_draftkings(lines: list[dict]) -> dict:
         if wager_m: result['wager'] = wager_m.group(1).replace(',', '')
         if pay_m: result['payout'] = pay_m.group(1).replace(',', '')
 
-        # Sub-leg odds: "Pick SGP | +400"
-        if re.match(r'\d*\s*Pick\s*SGP\s*[|I]\s*[+-]\d+', text, re.I):
+        # Sub-SGP header: "[SGP] 3 Pick Parlay" or "3 Pick SGP | +400"
+        sgp_header_m = re.search(r'(\d+)\s*Pick\s*(SGP|Parlay)', text, re.I)
+        if sgp_header_m and result['bet_type']:
+            # This is a sub-group header, not the main bet type
+            sgp_legs_remaining = int(sgp_header_m.group(1))
             i += 1; continue
 
         # Line value: standalone "3+" or "2.5"
@@ -334,11 +344,17 @@ def parse_draftkings(lines: list[dict]) -> dict:
                     event = maybe_event.strip()
                     consumed = 2
             if market:
-                result['selections'].append({
+                is_sgp_leg = sgp_legs_remaining > 0
+                if sgp_legs_remaining > 0:
+                    sgp_legs_remaining -= 1
+                sel = {
                     'player': '', 'stat': market, 'pick': pick_dir,
                     'line': pick_line, 'pick_type': 'TOTAL',
-                    'event': event or current_event,
-                })
+                    'event': (event or current_event) if is_sgp_leg else (event or ''),
+                }
+                if not is_sgp_leg and not event:
+                    sel['_needs_event'] = True
+                result['selections'].append(sel)
                 i += 1 + consumed; continue
             else:
                 # No game market found — store pick direction + line for next stat line
@@ -349,14 +365,21 @@ def parse_draftkings(lines: list[dict]) -> dict:
         # Player + stat line (H+R+RBI type props)
         if _is_stat_line(text):
             player, stat = _extract_player_stat(text)
-            # Always add the leg — even if player name looks odd, the stat is valid
-            result['selections'].append({
+            # Track SGP membership: if SGP legs exhausted, this is a non-SGP leg
+            # whose matchup may appear AFTER it — mark for backfill
+            is_sgp_leg = sgp_legs_remaining > 0
+            if sgp_legs_remaining > 0:
+                sgp_legs_remaining -= 1
+            sel = {
                 'player': player if is_valid_player_name(player) else player.strip(),
                 'stat': stat,
                 'pick': current_pick or 'Over',
                 'line': current_line, 'pick_type': 'PROP',
-                'event': current_event
-            })
+                'event': current_event if is_sgp_leg else '',
+            }
+            if not is_sgp_leg:
+                sel['_needs_event'] = True
+            result['selections'].append(sel)
             current_line = ''
             current_pick = ''
             i += 1; continue
@@ -483,6 +506,10 @@ def parse_draftkings(lines: list[dict]) -> dict:
             for sel in result['selections']:
                 if not sel.get('event'):
                     sel['event'] = team_events[0]
+
+    # Clean up internal flags
+    for sel in result['selections']:
+        sel.pop('_needs_event', None)
 
     # Extract leg count from bet_type
     leg_count_m = re.search(r'(\d+)\s*Pick', result.get('bet_type', ''), re.I)
