@@ -553,7 +553,8 @@ def parse_draftkings(lines: list[dict]) -> dict:
 FD_MARKET_WORDS = ['STRIKEOUTS', 'HOME RUN', 'MONEYLINE', 'SPREAD', 'TOTAL',
                    'OVER/UNDER', 'TO RECORD', 'HITS', 'RUNS', 'RBI', 'POINTS',
                    'REBOUNDS', 'ASSISTS', 'GOALS', 'TOUCHDOWN', 'YARDS',
-                   'GOALSCORER', 'DOUBLE DOUBLE', 'WINNER']
+                   'GOALSCORER', 'GOAL SCORER', 'DOUBLE DOUBLE', 'WINNER',
+                   'SHOTS ON GOAL', 'PUCKLINE', 'ALT TOTAL']
 
 def parse_fanduel(lines: list[dict]) -> dict:
     groups = group_lines(lines, threshold=20)
@@ -572,13 +573,13 @@ def parse_fanduel(lines: list[dict]) -> dict:
             result['status'] = text.strip()
             i += 1; continue
 
-        # ── Bet type + total odds: "6 Leg Parlay +2613" or "SGP 7Leg Same Game Parlay+ +3435"
-        # or "7 Pick Parlay 1 3890+5446 Open" or "Straight Bet +1100"
-        bt_m = re.match(r'^(?:SGP\s*[\+]?\s*)?(\d+)\s*Leg\s*(.*?Parlay\+?|SGP[^+]*)\s*([+-]\d+)', text, re.I)
+        # ── Bet type + total odds: "6 Leg Parlay +2613" or "3 Leg Parlay. +2084"
+        # or "SGP 7Leg Same Game Parlay+ +3435" or "7 Pick Parlay 1 3890+5446 Open"
+        bt_m = re.match(r'^(?:SGP\s*[\+]?\s*)?(\d+)\s*Leg\s*(.*?Parlay\.?\+?|SGP[^+]*)\s*([+-]\d+)', text, re.I)
         if not bt_m:
-            bt_m = re.match(r'^(\d+)\s*Pick\s*(Parlay)\s*.*?([+-]\d+)', text, re.I)
+            bt_m = re.match(r'^(\d+)\s*Pick\s*(Parlay)\.?\s*.*?([+-]\d+)', text, re.I)
         if bt_m and not result['bet_type']:
-            result['bet_type'] = f"{bt_m.group(1)} Leg {bt_m.group(2).strip()}"
+            result['bet_type'] = f"{bt_m.group(1)} Leg {bt_m.group(2).strip().rstrip('.')}"
             result['total_odds'] = bt_m.group(3)
             i += 1; continue
 
@@ -664,12 +665,12 @@ def parse_fanduel(lines: list[dict]) -> dict:
         # ── Pattern 2: Player prop — "Salvador Perez +300 +450" / "TO HIT A HOME RUN"
         # or "Robbie Ray Under +5.5" / "ROBBIE RAY-STRIKEOUTS"
         # or "Player Name" / "TO RECORD A HIT"
-        player_odds_m = re.match(r'^([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)+)\s+(Over|Under)?\s*([+-][\d\.]+)\s*([+-]\d+)?', text)
+        player_odds_m = re.match(r'^([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)+)\.?\s+(Over|Under)?\s*([+-][\d\.]+)\s*([+-]\d+)?', text)
         if not player_odds_m:
-            # "Salvador Perez +300 +450" — no Over/Under
-            player_odds_m = re.match(r'^([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)+)\s+([+-]\d+)\s*([+-]\d+)?$', text)
+            # "Salvador Perez +300 +450" or "Andrei Syechnikoy. +200"
+            player_odds_m = re.match(r'^([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)+)\.?\s+([+-]\d+)\s*([+-]\d+)?$', text)
         if player_odds_m:
-            player = player_odds_m.group(1)
+            player = player_odds_m.group(1).rstrip('.')
             # Check next line is a market
             if i + 1 < len(texts) and any(w in texts[i + 1].upper() for w in FD_MARKET_WORDS):
                 market = texts[i + 1].strip()
@@ -1445,4 +1446,3 @@ def parse_slip(img_path: str, sportsbook: str = None) -> dict:
         result = {'sportsbook': book, 'raw_lines': [l['text'] for l in lines]}
 
     return result
-
