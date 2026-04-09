@@ -186,6 +186,13 @@ DK_STAT_WORDS = ['Hits', 'Runs + RBI', 'RBI', 'RBl', 'HR', 'Home Run',
                  'Points', 'Rebounds', 'Assists', 'Touchdowns', 'Yards',
                  'Goals', 'Saves', 'Strikeouts', 'Bases', 'Outs',
                  'Earned Runs', 'Innings Pitched',
+                 'Three Pointers Made', 'Three Pointers', '3-Pointers Made',
+                 '3-Pointers', '3 Pointers Made', '3 Pointers',
+                 'Double Double', 'Triple Double',
+                 'Stolen Bases', 'Total Bases', 'Walks',
+                 'Passing Yards', 'Rushing Yards', 'Receiving Yards',
+                 'Receptions', 'Tackles', 'Sacks', 'Interceptions',
+                 'Shots on Goal', 'Blocked Shots', 'Faceoffs Won',
                  'Points O/U', 'Assists O/U', 'Rebounds O/U',
                  'Hits O/U', 'Runs O/U', 'Strikeouts O/U']
 
