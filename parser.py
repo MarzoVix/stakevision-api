@@ -182,19 +182,29 @@ def detect_sport_from_text(text: str) -> str:
     return ''
 
 # Stat keywords used to identify player prop lines (not team/date lines)
-DK_STAT_WORDS = ['Hits', 'Runs + RBI', 'RBI', 'RBl', 'HR', 'Home Run',
-                 'Points', 'Rebounds', 'Assists', 'Touchdowns', 'Yards',
-                 'Goals', 'Saves', 'Strikeouts', 'Bases', 'Outs',
-                 'Earned Runs', 'Innings Pitched',
-                 'Three Pointers Made', 'Three Pointers', '3-Pointers Made',
-                 '3-Pointers', '3 Pointers Made', '3 Pointers',
-                 'Double Double', 'Triple Double',
-                 'Stolen Bases', 'Total Bases', 'Walks',
-                 'Passing Yards', 'Rushing Yards', 'Receiving Yards',
-                 'Receptions', 'Tackles', 'Sacks', 'Interceptions',
-                 'Shots on Goal', 'Blocked Shots', 'Faceoffs Won',
-                 'Points O/U', 'Assists O/U', 'Rebounds O/U',
-                 'Hits O/U', 'Runs O/U', 'Strikeouts O/U']
+DK_STAT_WORDS = [
+    # MLB
+    'Hits', 'Runs', 'RBI', 'RBl', 'RBIs', 'Runs + RBI', 'HR', 'Home Run', 'Home Runs',
+    'Singles', 'Doubles', 'Triples', 'Stolen Bases', 'Total Bases', 'Walks',
+    'Strikeouts', 'Strikeouts Thrown', 'Earned Runs', 'Innings Pitched',
+    'Bases', 'Outs', 'Pitching Outs',
+    # NBA
+    'Points', 'Rebounds', 'Assists', 'Steals', 'Blocks', 'Turnovers',
+    'Three Pointers Made', 'Three Pointers', '3-Pointers Made',
+    '3-Pointers', '3 Pointers Made', '3 Pointers',
+    'Double Double', 'Triple Double',
+    # NFL
+    'Touchdowns', 'Yards', 'Passing Yards', 'Rushing Yards', 'Receiving Yards',
+    'Receptions', 'Tackles', 'Sacks', 'Interceptions',
+    # NHL
+    'Goals', 'Saves', 'Shots on Goal', 'Blocked Shots', 'Faceoffs Won',
+    # O/U variants (DK appends O/U to stat names)
+    'Points O/U', 'Assists O/U', 'Rebounds O/U', 'Hits O/U',
+    'Runs O/U', 'Strikeouts O/U', 'Singles O/U', 'Doubles O/U',
+    'RBIs O/U', 'Strikeouts Thrown O/U', 'Home Runs O/U',
+    'Stolen Bases O/U', 'Total Bases O/U', 'Walks O/U',
+    'Three Pointers Made O/U', 'Goals O/U', 'Saves O/U',
+]
 
 # Game total / market keywords that appear as standalone lines (no player name)
 DK_GAME_MARKETS = [
