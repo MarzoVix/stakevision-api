@@ -139,7 +139,16 @@ def is_valid_player_name(name: str) -> bool:
 
 def is_fake_leg(sel: dict) -> bool:
     combined = f"{sel.get('player','') or ''} {sel.get('stat','') or ''} {sel.get('market','') or ''}"
-    return bool(re.search(r'\d+\s*(Pick|Leg)\s*(Parlay|SGP)', combined, re.I))
+    if re.search(r'\d+\s*(Pick|Leg)\s*(Parlay|SGP)', combined, re.I):
+        return True
+    # Reject legs where player looks like a matchup or stat contains payout/wager noise
+    player = sel.get('player', '') or ''
+    stat = sel.get('stat', '') or ''
+    if re.search(r'@', player):
+        return True
+    if re.search(r'(Payout|Wager|To Pay|Paid|Cash Out|Accept)', stat, re.I):
+        return True
+    return False
 
 SPORT_TEAMS = {
     'MLB': ['Cardinals', 'Yankees', 'Red Sox', 'Cubs', 'Dodgers', 'Mets', 'Braves',
@@ -173,11 +182,12 @@ def detect_sport_from_text(text: str) -> str:
     return ''
 
 # Stat keywords used to identify player prop lines (not team/date lines)
-DK_STAT_WORDS = ['Hits', 'Runs + RBI', 'Runs', 'RBI', 'RBl', 'HR', 'Home Run',
+DK_STAT_WORDS = ['Hits', 'Runs + RBI', 'RBI', 'RBl', 'HR', 'Home Run',
                  'Points', 'Rebounds', 'Assists', 'Touchdowns', 'Yards',
                  'Goals', 'Saves', 'Strikeouts', 'Bases', 'Outs',
-                 '1st Inning', '1st Half', '1st Quarter', '2nd Half',
-                 'Total', 'Innings', 'Earned Runs']
+                 'Earned Runs', 'Innings Pitched',
+                 'Points O/U', 'Assists O/U', 'Rebounds O/U',
+                 'Hits O/U', 'Runs O/U', 'Strikeouts O/U']
 
 # Game total / market keywords that appear as standalone lines (no player name)
 DK_GAME_MARKETS = [
