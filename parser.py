@@ -50,7 +50,9 @@ def detect_sportsbook(lines: list[dict]) -> str:
     no_space = all_text.replace(' ', '')
 
     # ── Brand name matches (highest confidence) ──
-    if 'draftkings' in all_text:
+    if 'draftkings' in all_text or 'raftkings' in all_text or 'draftkngs' in all_text:
+        return 'DraftKings'
+    if re.search(r'bet\s*id[:\s]*dk\d', all_text):
         return 'DraftKings'
     if 'fanduel' in all_text:
         return 'FanDuel'
@@ -62,6 +64,15 @@ def detect_sportsbook(lines: list[dict]) -> str:
         return 'Fanatics'
     if 'onyx' in all_text:
         return 'Onyx'
+    if 'hard rock' in all_text or 'hardrock' in no_space:
+        return 'Hard Rock'
+    if 'sgpmax' in no_space or re.search(r'\d+-?\s*Bet\s+Parlay', all_text, re.I):
+        return 'Hard Rock'
+    # Hard Rock has "PLAYER - MARKET" format with "Hide selections" and "EDT/CDT" times
+    if 'hide selections' in all_text and re.search(r'\b(edt|cdt|est|cst)\b', all_text):
+        return 'Hard Rock'
+    if 'kalshi' in all_text:
+        return 'Kalshi'
 
     # ── Underdog: "higher"/"lower" + "reuse picks" ──
     if ('higher' in all_text or 'lower' in all_text) and 'reusepicks' in no_space:
@@ -72,9 +83,9 @@ def detect_sportsbook(lines: list[dict]) -> str:
     # DraftKings: "pick parlay", "pick sgp", "sgpx", "to pay:", "parlay boost"
     if 'sgpx' in no_space:
         return 'DraftKings'
-    if re.search(r'pick\s*parlay|pick\s*sgp', all_text) or 'pickparlay' in no_space:
+    if (re.search(r'pick\s*parlay|pick\s*sgp', all_text) or 'pickparlay' in no_space) and 'total alternate' not in all_text:
         return 'DraftKings'
-    if 'to pay:' in all_text or 'topay:' in no_space or 'topay$' in no_space:
+    if ('to pay:' in all_text or 'topay:' in no_space or 'topay$' in no_space) and 'total alternate' not in all_text and all_text.count('moneyline') < 3:
         return 'DraftKings'
     if 'parlayboost' in no_space or 'parlay boost' in all_text:
         return 'DraftKings'
@@ -87,6 +98,8 @@ def detect_sportsbook(lines: list[dict]) -> str:
     if 'betid:' in no_space or 'betid :' in all_text:
         return 'FanDuel'
     if 'total wager' in all_text or 'totalwager' in no_space:
+        return 'FanDuel'
+    if 'total alternate' in all_text:
         return 'FanDuel'
     if 'cash out' in all_text and ('parlay' in all_text or 'moneyline' in all_text):
         return 'FanDuel'
@@ -117,9 +130,45 @@ def detect_sportsbook(lines: list[dict]) -> str:
     if re.search(r'hide\s*selections?', all_text):
         return 'Onyx'
 
+    # Hard Rock: "to win" + "hide selections" combo
+    if 'to win' in all_text and 'hide selections' in all_text:
+        return 'Hard Rock'
+
     # Underdog fallback: "higher"/"lower" without other brand signals
     if ('higher' in all_text or 'lower' in all_text):
         return 'Underdog'
+
+    # ── Fallback: detect by content patterns (cropped screenshots) ──
+
+    # FanDuel: "Straight Bet", "Same Game Parlay", "ANY TIME GOAL SCORER",
+    # "PLAYER TO RECORD", "ALTERNATE PUCK LINE", "60 MIN MONEYLINE"
+    if 'straight bet' in all_text:
+        return 'FanDuel'
+    if 'same game parlay' in all_text:
+        return 'FanDuel'
+    if 'any time goal scorer' in all_text or 'anytime goal scorer' in all_text:
+        return 'FanDuel'
+    if 'player to record' in all_text:
+        return 'FanDuel'
+    if 'alternate puck line' in all_text or 'alt total goals' in all_text:
+        return 'FanDuel'
+    if '60 min moneyline' in all_text:
+        return 'FanDuel'
+    if 'first goal scorer' in all_text:
+        return 'FanDuel'
+
+    # DraftKings: "Anytime Goalscorer" (DK-style formatting), stat combo lines
+    if 'anytime goalscorer' in all_text:
+        return 'DraftKings'
+    if re.search(r'hits \+ runs \+ (rbis?|stolen bases|walks)', all_text):
+        return 'DraftKings'
+    if re.search(r'hits \+ walks \+ stolen bases', all_text):
+        return 'DraftKings'
+    if 'both teams to score' in all_text and 'shots on target' in all_text:
+        return 'DraftKings'
+    # DK cropped: "Player Points" lines with team abbreviation matchups
+    if re.search(r'\w+ points\b', all_text) and re.search(r'\b[a-z]{2,4} today \d+:\d+', all_text):
+        return 'DraftKings'
 
     return 'Unknown'
 
@@ -162,7 +211,8 @@ SPORT_TEAMS = {
             'Ducks', 'Kings', 'Sharks', 'Senators', 'Flames', 'Oilers', 'Canucks',
             'Lightning', 'Panthers', 'Hurricanes', 'Devils', 'Islanders', 'Flyers',
             'Capitals', 'Blue Jackets', 'Predators', 'Stars', 'Wild', 'Jets',
-            'Avalanche', 'Kraken', 'Sabres', 'Red Wings', 'Coyotes'],
+            'Avalanche', 'Kraken', 'Sabres', 'Red Wings', 'Coyotes',
+            'Golden Knights', 'Mammoth'],
     'NFL': ['Chiefs', 'Eagles', 'Cowboys', 'Patriots', 'Packers', 'Bears', '49ers',
             'Broncos', 'Ravens', 'Steelers', 'Seahawks', 'Bills', 'Dolphins',
             'Bengals', 'Chargers', 'Raiders', 'Colts', 'Texans', 'Titans',
@@ -176,16 +226,70 @@ def detect_sport_from_text(text: str) -> str:
         for team in teams:
             if team.lower() in text_lower:
                 return sport
+    # Keyword-based fallback for sports without team lists
+    if re.search(r'\b(NCAAB|NCAAF|March Madness)\b', text, re.I):
+        return 'NCAAB'
+    if re.search(r'\b(soccer|La Liga|Serie A|Bundesliga|Premier League|MLS|FC Barcelona|Girona)\b', text, re.I):
+        return 'Soccer'
+    if re.search(r'\b(UFC|MMA)\b', text, re.I):
+        return 'MMA'
+    if re.search(r'\b(ATP|WTA|Tennis)\b', text, re.I):
+        return 'Tennis'
     return ''
 
 # Stat keywords used to identify player prop lines (not team/date lines)
-DK_STAT_WORDS = ['Hits', 'Runs + RBI', 'RBI', 'RBl', 'HR', 'Home Run',
-                 'Points', 'Rebounds', 'Assists', 'Touchdowns', 'Yards',
-                 'Goals', 'Saves', 'Strikeouts', 'Bases', 'Outs']
+DK_STAT_WORDS = [
+    # MLB
+    'Hits', 'Runs', 'RBI', 'RBl', 'RBIs', 'Runs + RBI', 'HR', 'Home Run', 'Home Runs',
+    'Singles', 'Doubles', 'Triples', 'Stolen Bases', 'Total Bases', 'Walks',
+    'Strikeouts', 'Strikeouts Thrown', 'Earned Runs', 'Innings Pitched',
+    'Hits Allowed', 'Earned Runs Allowed',
+    'Bases', 'Outs', 'Pitching Outs',
+    # NBA
+    'Points', 'Rebounds', 'Assists', 'Steals', 'Blocks', 'Turnovers',
+    'Three Pointers Made', 'Three Pointers', '3-Pointers Made',
+    '3-Pointers', '3 Pointers Made', '3 Pointers',
+    'Double Double', 'Triple Double',
+    'Points + Rebounds + Assists', 'Points + Rebounds', 'Points + Assists',
+    'Rebounds + Assists',
+    # NFL
+    'Touchdowns', 'Yards', 'Passing Yards', 'Rushing Yards', 'Receiving Yards',
+    'Receptions', 'Tackles', 'Sacks', 'Interceptions',
+    # NHL
+    'Goals', 'Saves', 'Shots on Goal', 'Blocked Shots', 'Faceoffs Won',
+    # Soccer
+    'Anytime Goalscorer', 'Shots on Target', 'Both Teams to Score',
+    # O/U variants (DK appends O/U to stat names)
+    'Points O/U', 'Assists O/U', 'Rebounds O/U', 'Hits O/U',
+    'Runs O/U', 'Strikeouts O/U', 'Singles O/U', 'Doubles O/U',
+    'RBIs O/U', 'Strikeouts Thrown O/U', 'Home Runs O/U',
+    'Stolen Bases O/U', 'Total Bases O/U', 'Walks O/U',
+    'Three Pointers Made O/U', 'Goals O/U', 'Saves O/U',
+    'Hits Allowed O/U', 'Earned Runs Allowed O/U',
+    'Shots on Goal O/U', 'Blocked Shots O/U',
+]
+
+# Game total / market keywords that appear as standalone lines (no player name)
+DK_GAME_MARKETS = [
+    r'Runs\s*[-–]\s*1st\s*Inning', r'Runs\s*[-–]\s*\d+\w*\s*Inning',
+    r'Total\s+Runs', r'Total\s+Points', r'Total\s+Goals',
+    r'1st\s*Half', r'2nd\s*Half', r'1st\s*Quarter',
+    r'Alternate\s+Total', r'Alternate\s+Run\s+Line',
+    r'Team\s+Total',
+    r'1st\s+Home\s+Run\s+Type',
+    r'Both\s+Teams\s+to\s+Score',
+    r'1st\s+Half\s+Total\s+Goals',
+    r'Total\s+Goals',
+]
 
 def _normalize_text(text: str) -> str:
-    """Normalize common OCR errors."""
-    return text.replace('RBls', 'RBIs').replace('RBl', 'RBI')
+    """Normalize common OCR errors and split concatenated OCR text."""
+    text = text.replace('RBls', 'RBIs').replace('RBl', 'RBI')
+    # Split concatenated player+stat: "BallThree" → "Ball Three", "ReavesThree" → "Reaves Three"
+    text = re.sub(r'([a-z])(Three|Points|Rebounds|Assists|Hits|Runs|Strikeouts|Blocks|Steals|Goals|Saves|Shots|Home|Stolen|Total|Earned|Double|Triple|Walks|Singles|Doubles|Triples|Faceoffs|Blocked|Innings|Anytime|Both)', r'\1 \2', text)
+    # Fix "PointersMade" → "Pointers Made"
+    text = re.sub(r'(Pointers)(Made)', r'\1 \2', text)
+    return text
 
 def _is_stat_line(text: str) -> bool:
     """True only if text contains an actual stat keyword — not team names or dates."""
@@ -270,9 +374,48 @@ def parse_draftkings(lines: list[dict]) -> dict:
             current_line = line_m.group(1) + '+'
             continue
 
+        # ── Game-level market: "No Home Run" with "1st Home Run Type" below
+        if re.match(r'^(No Home Run|Home Run|No Run)', text.strip(), re.I):
+            market = ''
+            if i + 1 < len(texts) and re.search(r'Home Run Type|Inning', texts[i+1], re.I):
+                market = texts[i+1].strip()
+            result['selections'].append({
+                'pick': text.strip(), 'market': market or '1st Home Run Type',
+                'pick_type': 'GAME_PROP', 'event': current_event
+            })
+            current_line = ''
+            continue
+
+        # ── Player + odds / market below: "Sidney Crosby +215" / "Anytime Goalscorer"
+        player_odds_m = re.match(r'^([A-Z][a-zA-Z\'\-\.]+(?:\s[A-Z][a-zA-Z\'\-\.]+)*(?:\s*\([A-Z]+\))?)\s+([+-]\d+)$', text.strip())
+        if player_odds_m and i + 1 < len(texts):
+            next_lower = texts[i+1].lower()
+            if any(w.lower() in next_lower for w in ['Goalscorer', 'Goal Scorer', 'Shots on Target',
+                                                       'Both Teams', 'Moneyline']):
+                result['selections'].append({
+                    'player': player_odds_m.group(1), 'odds': player_odds_m.group(2),
+                    'market': texts[i+1].strip(), 'pick_type': 'PROP',
+                    'event': current_event
+                })
+                continue
+
+        # ── Player name / market on next line: "Macklin Celebrini" / "Anytime Goalscorer"
+        if (re.match(r'^[A-Z][a-zA-Z\'\-\.]+(?:\s[A-Z][a-zA-Z\'\-\.]+)+(?:\s*\([A-Z]+\))?$', text.strip())
+                and i + 1 < len(texts)
+                and any(w.lower() in texts[i+1].lower() for w in ['Goalscorer', 'Goal Scorer',
+                                                                    'Shots on Target', 'Both Teams'])):
+            result['selections'].append({
+                'player': text.strip(), 'market': texts[i+1].strip(),
+                'pick_type': 'PROP', 'event': current_event
+            })
+            continue
+
+        # Normalize text for stat matching
+        text_norm = _normalize_text(text)
+
         # Player + stat line (H+R+RBI type props)
-        if _is_stat_line(text):
-            player, stat = _extract_player_stat(text)
+        if _is_stat_line(text_norm):
+            player, stat = _extract_player_stat(text_norm)
             if is_valid_player_name(player):
                 result['selections'].append({
                     'player': player, 'stat': stat, 'pick': 'Over',
@@ -312,7 +455,17 @@ def parse_draftkings(lines: list[dict]) -> dict:
             if not result['bet_type']: result['bet_type'] = 'Parlay'
             continue
 
-        # ── Spread/Run Line leg
+        # ── Spread/Run Line leg — also handle OCR merging "A Run Line LA Dodgers -1.5 -118"
+        inline_spread = re.match(r'^[A-Za-z]?\s*(?:Run Line|Spread)\s+(.+?)\s+([+-][\d\.]+)\s+([+-]?\d+)$', text.strip(), re.I)
+        if inline_spread:
+            result['selections'].append({
+                'team': inline_spread.group(1).strip(), 'line': inline_spread.group(2),
+                'odds': inline_spread.group(3), 'pick_type': 'SPREAD',
+                'event': current_event
+            })
+            if not result['bet_type']: result['bet_type'] = 'Parlay'
+            continue
+
         spread_m = re.match(r'^(?:\d+[A-Z]?\s+)?([A-Z][A-Za-z\s]+?)\s+([+-][\d\.]+)\s+(-?\d+)$', text.strip())
         if spread_m and i + 1 < len(texts) and re.match(r'^(Run Line|Spread)', texts[i+1], re.I):
             result['selections'].append({
@@ -419,7 +572,11 @@ FD_MARKET_WORDS = ['STRIKEOUTS', 'HOME RUN', 'MONEYLINE', 'SPREAD', 'TOTAL',
                    'OVER/UNDER', 'TO RECORD', 'HITS', 'RUNS', 'RBI', 'POINTS',
                    'REBOUNDS', 'ASSISTS', 'GOALS', 'TOUCHDOWN', 'YARDS',
                    'GOALSCORER', 'GOAL SCORER', 'DOUBLE DOUBLE', 'WINNER',
-                   'SHOTS ON GOAL', 'PUCKLINE', 'ALT TOTAL']
+                   'SHOTS ON GOAL', 'PUCKLINE', 'ALT TOTAL', 'ALT STRIKEOUTS',
+                   'MADE THREES', 'MADE THREE', 'ALT', 'SAVES', '1ST HALF',
+                   'TRIPLE DOUBLE', 'BLOCKED SHOTS',
+                   'ANY TIME', 'FIRST GOAL', '60 MIN', 'PUCK LINE',
+                   'ALTERNATE', 'PLAYER TO']
 
 def parse_fanduel(lines: list[dict]) -> dict:
     groups = group_lines(lines, threshold=20)
@@ -427,6 +584,20 @@ def parse_fanduel(lines: list[dict]) -> dict:
 
     result = {'sportsbook': 'FanDuel', 'bet_type': '', 'total_odds': '',
               'wager': '', 'payout': '', 'status': '', 'selections': []}
+
+    # Pre-normalize all OCR text for FanDuel concatenation issues
+    for ti in range(len(texts)):
+        t = texts[ti]
+        t = re.sub(r'TORECORD', 'TO RECORD', t)
+        t = re.sub(r'TOHIT', 'TO HIT', t)
+        t = re.sub(r'TO\s*HITA\b', 'TO HIT A', t)
+        t = re.sub(r'RECORDA', 'RECORD A', t)
+        t = re.sub(r'\bAHIT\b', 'A HIT', t)
+        t = re.sub(r'\bAHOME\b', 'A HOME', t)
+        t = re.sub(r'PLAYER(\d)', r'PLAYER \1', t)
+        t = re.sub(r'(\w)TOTAL\s*SAVES', r'\1 TOTAL SAVES', t)
+        t = re.sub(r'Over(\d)', r'Over \1', t)
+        texts[ti] = t
 
     current_event = ''
     i = 0
@@ -528,6 +699,20 @@ def parse_fanduel(lines: list[dict]) -> dict:
             })
             i = next_idx; continue
 
+        # ── Pattern 1b: "Player-Over/Under XX.X odds" — "Dustin Wolf-Over 24.5 +108"
+        player_ou_m = re.match(r'^(.+?)[-–]\s*(Over|Under)\s*([\d\.]+)\s*([+-]\d+)?$', text.strip(), re.I)
+        if player_ou_m and i + 1 < len(texts):
+            next_upper = texts[i+1].upper()
+            if any(w in next_upper for w in FD_MARKET_WORDS):
+                result['selections'].append({
+                    'player': player_ou_m.group(1).strip(),
+                    'pick': player_ou_m.group(2),
+                    'line': player_ou_m.group(3),
+                    'odds': player_ou_m.group(4) or '',
+                    'market': texts[i+1].strip()
+                })
+                i += 2; continue
+
         # ── Pattern 2: Player prop — "Salvador Perez +300 +450" / "TO HIT A HOME RUN"
         # or "Robbie Ray Under +5.5" / "ROBBIE RAY-STRIKEOUTS"
         # or "Player Name" / "TO RECORD A HIT"
@@ -557,8 +742,8 @@ def parse_fanduel(lines: list[dict]) -> dict:
                 i += 3 if event else i + 2; continue
 
         # ── Pattern 3: Standalone player name followed by market ──
-        # "Marcus Semien" / "TO RECORD A HIT" or "Drake Baldwin" / "PLAYER TO RECORD 2+ HITS..."
-        if (re.match(r'^[A-Z][a-z]+(\s[A-Z][a-zA-Z]+)+$', text.strip())
+        # "Marcus Semien" / "TO RECORD A HIT" or "Pete Crow-Armstrong" / "TO RECORD A HIT"
+        if (re.match(r'^[A-Z][a-zA-Z\'\-\.]+(\s[A-Za-z][a-zA-Z\'\-\.]+)+$', text.strip())
                 and i + 1 < len(texts)
                 and any(w in texts[i + 1].upper() for w in FD_MARKET_WORDS)):
             player = text.strip()
@@ -693,8 +878,11 @@ def parse_fanduel(lines: list[dict]) -> dict:
 # ── PrizePicks Parser ─────────────────────────────────────────────────────────
 PP_STAT_KEYWORDS = ['Points', 'Rebounds', 'Assists', 'Strikeouts', 'Hits',
                     'RBIs', 'Goals', 'Saves', 'Pts+Rebs+Asts', '3-Pointers',
-                    'Rebs+Asts', 'Pts+Rebs', 'Pts + Rebs', 'Tackles',
-                    'Fantasy', 'Passing', 'Rushing', 'Receiving']
+                    'Rebs+Asts', 'Pts+Rebs', 'Pts + Rebs', 'Pts+Asts',
+                    'Pts + Asts', 'PRA', 'Tackles',
+                    'Fantasy Score', 'Fantasy Points', 'Fantasy',
+                    'Passing', 'Rushing', 'Receiving',
+                    'Shots on Goal', 'Blocked Shots']
 
 def parse_prizepicks(lines: list[dict]) -> dict:
     groups = group_lines(lines, threshold=20)
@@ -768,9 +956,9 @@ def parse_prizepicks(lines: list[dict]) -> dict:
             # Player name + line on same row: "Paul George 15.5" or "Mitchell Robinson 15.5"
             pl_m = re.match(r'^([A-Z][a-zA-Z\'-]+(?:\s[A-Z][a-zA-Z\'-]+)+)\s+([\d\.]+)$', text.strip())
             if pl_m:
-                if current_pick.get('player') and not current_pick.get('stat'):
-                    # Previous pick had no stat — it's incomplete, discard or save
-                    pass
+                # Save previous pick if it has enough data
+                if current_pick.get('player') and (current_pick.get('stat') or current_pick.get('line')):
+                    result['picks'].append(current_pick)
                 current_pick = {'player': pl_m.group(1), 'line': pl_m.group(2)}
                 continue
 
@@ -932,12 +1120,15 @@ def parse_underdog(lines: list[dict]) -> dict:
             })
             continue
 
-        # Player name: multi-word name (handles McName, O'Name, trailing period), not UI text
+        # Player name: multi-word name (handles McName, O'Name, hyphenated, lowercase particles)
         skip_words = {'Reuse', 'Submit', 'Entry', 'Review', 'Share', 'Cancel',
                       'Higher', 'Lower', 'Picks'}
         clean = text.rstrip('.')
-        if re.match(r'^[A-Z][a-zA-Z\']+(\s[A-Z][a-zA-Z\']+)+$', clean):
+        # Match "James van Riemsdyk", "Olivier-Maxence Prosper", "TaijuanWalker"
+        if re.match(r'^[A-Z][a-zA-Z\'\-]+(\s+[a-zA-Z][a-zA-Z\'\-]+)+$', clean):
             if not any(w in clean for w in skip_words):
+                # Split concatenated names: "TaijuanWalker" → "Taijuan Walker"
+                clean = re.sub(r'([a-z])([A-Z])', r'\1 \2', clean)
                 player_names.append(clean)
                 continue
 
@@ -994,38 +1185,85 @@ def parse_betmgm(lines: list[dict]) -> dict:
             i += 1
             continue
 
-        # Selection lines — market descriptions like "Result - Devils (Game)"
-        # or "Total goals - Under 7.5 (Game)" or "Over 220.5 (Game)"
+        # Skip summary line (before "Hide legs") — it's a condensed version of the legs
+        # OCR may read "|" as ")" or merge text, so also skip if next line is "Hide legs"
+        if i + 1 < len(texts) and re.match(r'^Hide\s*legs', texts[i+1], re.I):
+            i += 1; continue
+        # Skip "Hide legs" itself
+        if re.match(r'^Hide\s*legs', text, re.I):
+            i += 1; continue
+
+        # Skip combined summary line with "|" separator
+        if '|' in text and re.search(r'(Result|Total|Spread|Anytime)', text, re.I):
+            i += 1; continue
+
+        # ── "Anytime point - Player (Match)" — extract player from market
+        anytime_m = re.match(r'^(Anytime\s+\w+)\s*[-–]\s*(.+?)(?:\s*\((?:Match|Game)\))?$', text.strip(), re.I)
+        if anytime_m:
+            result['selections'].append({
+                'player': anytime_m.group(2).strip(),
+                'market': anytime_m.group(1).strip(),
+            })
+            i += 1; continue
+
+        # ── "Result - Team (Game)" — extract team from market
+        result_m = re.match(r'^(Result|Spread)\s*[-–]\s*(.+?)(?:\s+[+-][\d\.]+)?\s*\((?:Game|Match)\)?$', text.strip(), re.I)
+        if result_m:
+            market_type = result_m.group(1).strip()
+            team_or_detail = result_m.group(2).strip()
+            sel = {'market': market_type}
+            # Extract spread line if present
+            spread_m = re.search(r'(.+?)\s+([+-][\d\.]+)', team_or_detail)
+            if spread_m:
+                sel['team'] = spread_m.group(1).strip()
+                sel['line'] = spread_m.group(2)
+            else:
+                sel['team'] = team_or_detail
+            result['selections'].append(sel)
+            i += 1; continue
+
+        # ── "Total goals - Under 7.5 (Game)" — extract pick + line
+        total_m = re.match(r'^(Total\s+\w+)\s*[-–]\s*(Over|Under)\s+([\d\.]+)\s*\((?:Game|Match)\)?$', text.strip(), re.I)
+        if total_m:
+            result['selections'].append({
+                'market': total_m.group(1).strip(),
+                'pick': total_m.group(2),
+                'line': total_m.group(3),
+            })
+            i += 1; continue
+
+        # ── Other market descriptions (fallback)
         if re.search(r'(Result|Total|Over|Under|Moneyline|Spread|First|Last|Anytime)', text, re.I):
-            # Skip the combined summary line (has "|" separator)
-            if '|' not in text and 'hide' not in text.lower():
+            if 'hide' not in text.lower():
                 result['selections'].append({'market': text})
-                i += 1
-                continue
+                i += 1; continue
 
         # Matchup: "Panthers at Devils" or "Lakers vs Celtics"
         if re.search(r'\s(at|vs\.?|@)\s', text, re.I) and not re.search(r'(Stake|Payout)', text, re.I):
-            # Attach to last selection
             if result['selections']:
                 result['selections'][-1]['event'] = text
-            i += 1
-            continue
+            i += 1; continue
 
-        # Date/time: "3/3/26 • 7:05 PM"
-        if re.search(r'\d+/\d+/\d+', text):
+        # Date/time: "3/3/26 • 7:05 PM" or "Today 7:08 PM"
+        if re.search(r'(\d+/\d+/\d+|Today|Tomorrow|Starting)', text, re.I):
             if result['selections']:
                 result['selections'][-1]['date'] = text
-            i += 1
-            continue
+            i += 1; continue
 
         i += 1
+
+    # Detect sport
+    all_text = ' '.join(l['text'] for l in lines)
+    result['sport'] = detect_sport_from_text(all_text)
 
     return result
 
 # ── Fanatics Parser ───────────────────────────────────────────────────────────
 FAN_MARKET_WORDS = ['Home Run', 'Moneyline', 'Spread', 'Total', 'Alt', 'Anytime',
                     'Goalscorer', 'Points', 'Rebounds', 'Assists', 'Strikeouts',
-                    'Touchdown', 'Winner', 'Double Double', 'First']
+                    'Touchdown', 'Winner', 'Double Double', 'First',
+                    'Blocked Shots', 'Shots on Goal', 'Race To', 'Neither',
+                    'Triple Double', 'Saves', 'Goals']
 
 def parse_fanatics(lines: list[dict]) -> dict:
     groups = group_lines(lines, threshold=20)
@@ -1094,9 +1332,20 @@ def parse_fanatics(lines: list[dict]) -> dict:
             if not result['total_odds']: result['total_odds'] = odds_m.group(1)
             i += 1; continue
 
+        # ── Format 0: Standalone pick word / market — "Neither" / "Race To 6 Goals" / matchup
+        if re.match(r'^(Neither|Yes|No|Over|Under)$', text.strip(), re.I):
+            if i + 1 < len(texts) and any(w.lower() in texts[i+1].lower() for w in FAN_MARKET_WORDS):
+                sel = {'pick': text.strip(), 'market': texts[i+1].strip()}
+                consumed = 2
+                if i + 2 < len(texts) and re.search(r'\s(at|vs\.?|@)\s', texts[i+2], re.I):
+                    sel['event'] = texts[i+2].strip()
+                    consumed = 3
+                result['selections'].append(sel)
+                i += consumed; continue
+
         # ── Format 2: SGP Stack — standalone player name ──
-        # "Tage Thompson" followed by "Anytime Goalscorer" followed by matchup
-        if re.match(r'^[A-Z][a-z]+(\s[A-Z][a-zA-Z]+)+$', text.strip()):
+        # "Tage Thompson" or "gor Chernyshov" (truncated OCR) followed by market
+        if re.match(r'^[A-Za-z][a-z]+(\s[A-Z][a-zA-Z\'\-]+)+$', text.strip()):
             if i + 1 < len(texts) and any(w.lower() in texts[i + 1].lower() for w in FAN_MARKET_WORDS):
                 sel = {'player': text.strip(), 'market': texts[i + 1].strip()}
                 if i + 2 < len(texts) and re.search(r'\s(at|vs\.?|@)\s', texts[i + 2], re.I):
@@ -1106,6 +1355,72 @@ def parse_fanatics(lines: list[dict]) -> dict:
                     i += 2
                 result['selections'].append(sel)
                 continue
+
+        # ── Format 3a: Individual line+stat: "3+ -180" / "Player-Stat" / event
+        line_odds_m = re.match(r'^(\d+)\+\s*([+-]\d+)?$', text.strip())
+        if line_odds_m and i + 1 < len(texts):
+            next_text = texts[i + 1]
+            # Check for "Player-Stat" on next line
+            ps_m = re.match(r'^(.+?)\s*[-–]\s*(.+)$', next_text)
+            if ps_m:
+                sel = {'player': ps_m.group(1).strip(), 'market': ps_m.group(2).strip(),
+                       'line': line_odds_m.group(1) + '+'}
+                if line_odds_m.group(2): sel['odds'] = line_odds_m.group(2)
+                # Look for event on following lines
+                consumed = 2
+                if i + 2 < len(texts) and re.search(r'(NHL|NBA|MLB|NFL|at|vs\.?|@)', texts[i+2], re.I):
+                    event_parts = [texts[i+2].strip()]
+                    consumed = 3
+                    if i + 3 < len(texts) and re.match(r'^\d+:\d+', texts[i+3]):
+                        event_parts.append(texts[i+3].strip())
+                        consumed = 4
+                    sel['event'] = ' '.join(event_parts)
+                result['selections'].append(sel)
+                i += consumed; continue
+
+        # ── Format 3b: Paired player grid — "Brandon Lowe1+ Mike Busch 1+" / "ALT Hits ALT Hits"
+        paired_m = re.findall(r'([A-Z][a-zA-Z\'\-]+(?:\s[A-Z][a-zA-Z\'\-]+)*)\s*(\d+)\+', text)
+        if len(paired_m) >= 2 and i + 1 < len(texts):
+            market_line = texts[i + 1]
+            # Split market line: "ALT Hits ALT Hits" → ["ALT Hits", "ALT Hits"]
+            market_parts = re.split(r'\s{2,}', market_line.strip())
+            if len(market_parts) < len(paired_m):
+                market_parts = [market_line.strip()] * len(paired_m)
+            # Look for matchup lines below
+            event_parts = []
+            consumed = 2
+            for j in range(i + 2, min(i + 4, len(texts))):
+                if re.search(r'\s(at|vs\.?|@)\s', texts[j], re.I):
+                    event_parts.append(texts[j].strip())
+                    consumed += 1
+                else:
+                    break
+            for idx, (player, line) in enumerate(paired_m):
+                sel = {'player': player.strip(), 'line': line + '+'}
+                if idx < len(market_parts):
+                    sel['market'] = market_parts[idx].strip()
+                if event_parts:
+                    sel['event'] = event_parts[min(idx, len(event_parts)-1)]
+                result['selections'].append(sel)
+            i += consumed; continue
+
+        # ── Format 3c: Soccer grid — "Over 1.5 Arsenal" / "Total Goals Money Line 3-Way"
+        soccer_grid_m = re.match(r'^(Over|Under|Yes|No)\s+([\d\.]+)?\s*(.+)$', text.strip(), re.I)
+        if soccer_grid_m and i + 1 < len(texts) and any(w.lower() in texts[i+1].lower() for w in ['Total', 'Both Teams', 'Money Line', 'Moneyline']):
+            pick1 = soccer_grid_m.group(1)
+            line1 = soccer_grid_m.group(2) or ''
+            team_or_extra = soccer_grid_m.group(3).strip()
+            market_line = texts[i + 1].strip()
+            # May have two selections merged: "Total Goals Money Line 3-Way"
+            # Followed by matchup: "Sassuolo vs Atalanta Arsenal vs Chelsea"
+            sel1 = {'pick': pick1, 'line': line1, 'market': market_line.split('  ')[0] if '  ' in market_line else market_line}
+            result['selections'].append(sel1)
+            if team_or_extra and not re.match(r'^[\d\.]+$', team_or_extra):
+                # Second selection (team/pick): "Arsenal" / "Money Line 3-Way"
+                market2_parts = market_line.split('  ')
+                sel2 = {'team': team_or_extra, 'market': market2_parts[-1].strip() if len(market2_parts) > 1 else 'Moneyline'}
+                result['selections'].append(sel2)
+            i += 2; continue
 
         # ── Format 3: Parlay grid — "1+ 8+" line / "Player-Stat Player-Stat" ──
         # Lines like "1+ 8+" or "8+ 1+" are pick line pairs
@@ -1206,8 +1521,8 @@ def parse_onyx(lines: list[dict]) -> dict:
             result['bet_type'] = 'Single'
             i += 1; continue
 
-        # ── Format 3: "Mitchell Robinson Over 0.5 +510 WON" ──
-        prop_m = re.match(r'^(.+?)\s+(Over|Under)\s+([\d\.]+)\s+([+-]\d+)\s*(WON|LOST|PUSH)?', text, re.I)
+        # ── Format 3: "Mitchell Robinson Over 0.5 +510 WON" or "Jamal Shead Over17.5 -111 WON" ──
+        prop_m = re.match(r'^(.+?)\s+(Over|Under)\s*([\d\.]+)\s+([+-]\d+)\s*(WON|LOST|PUSH)?', text, re.I)
         if prop_m:
             current_sel = {
                 'player': prop_m.group(1).strip(),
@@ -1219,6 +1534,27 @@ def parse_onyx(lines: list[dict]) -> dict:
                 result['status'] = prop_m.group(5)
             result['selections'].append(current_sel)
             result['total_odds'] = prop_m.group(4)
+            i += 1; continue
+
+        # ── Format 4 (Pick Receipt): "Player Points: Dillon Brooks Over 13.5"
+        # or "Player Triple Double: LeBron James Over 0.5"
+        # or "Point Spread: Los Angeles Lakers -2.5"
+        receipt_m = re.match(r'^(Player\s+\w[\w\s]*?|Point\s+Spread):\s*(.+?)(?:\s+(Over|Under)\s+([\d\.]+))?(?:\s+([+-][\d\.]+))?$', text, re.I)
+        if receipt_m:
+            market = receipt_m.group(1).strip()
+            name = receipt_m.group(2).strip()
+            pick = receipt_m.group(3) or ''
+            line = receipt_m.group(4) or ''
+            spread_line = receipt_m.group(5) or ''
+            current_sel = {'market': market}
+            if 'Spread' in market:
+                current_sel['team'] = name
+                current_sel['line'] = spread_line or line
+            else:
+                current_sel['player'] = name
+                if pick: current_sel['pick'] = pick
+                if line: current_sel['line'] = line
+            result['selections'].append(current_sel)
             i += 1; continue
 
         # ── Format 2: Market line — "Will There Be Overtime: Yes" ──
@@ -1300,6 +1636,153 @@ def parse_onyx(lines: list[dict]) -> dict:
 
     return result
 
+# ── Hard Rock Bet Parser ─────────────────────────────────────────────────────
+HR_MARKET_WORDS = ['HOME RUNS', 'ANYTIME GOALSCORER', 'SHOTS ON TARGET',
+                   'TOTAL GOALS', '1ST HALF TOTAL GOALS', 'TO WIN',
+                   'STRIKEOUTS', 'HITS', 'MONEYLINE', 'SPREAD']
+
+def parse_hardrock(lines: list[dict]) -> dict:
+    groups = group_lines(lines, threshold=20)
+    texts = [row_text(g) for g in groups]
+
+    result = {'sportsbook': 'Hard Rock', 'bet_type': '', 'total_odds': '',
+              'wager': '', 'payout': '', 'status': '', 'selections': []}
+
+    i = 0
+    current_event = ''
+    while i < len(texts):
+        text = texts[i]
+
+        # Skip branding
+        if re.match(r'^(Hard Rock|BET|SPORTSBOOK|My Bets|Upcoming|Live|Finished|Home|Discover|Rewards|Account)', text, re.I):
+            i += 1; continue
+        if re.match(r'^(Share|Hide selections|Early cash out|ID:)', text, re.I):
+            i += 1; continue
+        if re.search(r'Profit Boost applied', text, re.I):
+            i += 1; continue
+
+        # ── Bet type + odds: "SGPMAX 4-Bet Parlay +1197" or "PARLAY 6-Bet Parlay +451"
+        bt_m = re.match(r'^(?:SGPMAX|PARLAY)\s+(\d+)-?\s*Bet\s+Parlay\s*([+-]\d+)?', text, re.I)
+        if bt_m:
+            result['bet_type'] = f"{bt_m.group(1)}-Bet Parlay"
+            if bt_m.group(2):
+                result['total_odds'] = bt_m.group(2)
+            i += 1; continue
+
+        # Standalone odds
+        if re.match(r'^[+-]\d{3,}$', text.strip()) and not result['total_odds']:
+            result['total_odds'] = text.strip()
+            i += 1; continue
+
+        # ── Wager / Payout ──
+        wager_m = re.search(r'(?:Wager|Stake)[:\s]+\$?([\d,\.]+)', text, re.I)
+        pay_m = re.search(r'(?:Payout|To Win|To Pay)[:\s]+\$?([\d,\.]+)', text, re.I)
+        if wager_m: result['wager'] = wager_m.group(1).replace(',', '')
+        if pay_m: result['payout'] = pay_m.group(1).replace(',', '')
+        if wager_m or pay_m:
+            i += 1; continue
+
+        # "$X ... $Y" wager/payout on same line
+        if re.match(r'^\$[\d,\.]+\s+\$[\d,\.]+', text):
+            amounts = re.findall(r'\$([\d,\.]+)', text)
+            if len(amounts) >= 2:
+                result['wager'] = amounts[0].replace(',', '')
+                result['payout'] = amounts[1].replace(',', '')
+            i += 1; continue
+
+        # ── SGP sub-header: "SGP Girona vs FC Barcelona +750"
+        sgp_m = re.match(r'^SGP\s+(.+?)\s+([+-]\d+)', text, re.I)
+        if sgp_m:
+            current_event = sgp_m.group(1).strip()
+            i += 1; continue
+
+        # ── Selection: "Over 0.5" + "PLAYER - MARKET" or just market text
+        ou_m = re.match(r'^(Over|Under)\s+([\d\.]+)\s*([+-]\d+)?$', text.strip(), re.I)
+        if ou_m:
+            pick = ou_m.group(1)
+            line = ou_m.group(2)
+            odds = ou_m.group(3) or ''
+            market = ''
+            if i + 1 < len(texts):
+                market = texts[i + 1].strip()
+                i += 1
+            # Extract player from market: "RAPHINHA - SHOTS ON TARGET"
+            player = ''
+            pm = re.match(r'^(.+?)\s*[-–]\s*(.+)$', market)
+            if pm:
+                player = pm.group(1).strip()
+                market = pm.group(2).strip()
+            sel = {'pick': pick, 'line': line, 'market': market, 'event': current_event}
+            if odds: sel['odds'] = odds
+            if player: sel['player'] = player
+            result['selections'].append(sel)
+            i += 1; continue
+
+        # ── Selection: "O1 Texas [W] -525" / "TOWIN" or "O Blue Jays -275" / "TOWIN"
+        # or "Ferran Torres" / "FERRAN TORRES ANYTIME GOALSCORER"
+        team_odds_m = re.match(r'^O?\s*\d*\s*(.+?)\s+([+-]\d+)$', text.strip())
+        if team_odds_m and i + 1 < len(texts) and re.match(r'^TO\s*WIN', texts[i+1], re.I):
+            team = re.sub(r'^\d+\s*', '', team_odds_m.group(1)).strip()
+            odds = team_odds_m.group(2)
+            event = ''
+            if i + 2 < len(texts) and re.search(r'(@|vs\.?)', texts[i+2], re.I):
+                event = texts[i + 2].strip()
+            sel = {'team': team, 'odds': odds, 'market': 'Moneyline', 'event': event}
+            result['selections'].append(sel)
+            i += 3 if event else i + 2; continue
+
+        # ── Selection: standalone team name / "TOWIN"
+        if (i + 1 < len(texts) and re.match(r'^TO\s*WIN', texts[i+1], re.I)
+                and re.match(r'^O?\s*(.+)$', text.strip())):
+            team = re.sub(r'^O\s*', '', text).strip()
+            event = ''
+            if i + 2 < len(texts) and re.search(r'(@|vs\.?)', texts[i+2], re.I):
+                event = texts[i + 2].strip()
+            sel = {'team': team, 'market': 'Moneyline', 'event': event}
+            result['selections'].append(sel)
+            i += 3 if event else i + 2; continue
+
+        # ── Selection: player name + market below
+        if (re.match(r'^[A-Z0-9]', text) and i + 1 < len(texts)
+                and any(w in texts[i+1].upper() for w in HR_MARKET_WORDS)):
+            player_or_team = text.strip()
+            market_text = texts[i + 1].strip()
+            odds = ''
+            # Check for odds on the market line or player line
+            odds_m = re.search(r'([+-]\d+)', text)
+            if odds_m: odds = odds_m.group(1)
+            # Extract player from market: "MICHAEL BUSCH - HOME RUNS"
+            pm = re.match(r'^(.+?)\s*[-–]\s*(.+)$', market_text)
+            sel = {'event': current_event}
+            if pm:
+                sel['player'] = pm.group(1).strip()
+                sel['market'] = pm.group(2).strip()
+            else:
+                sel['team'] = player_or_team
+                sel['market'] = market_text
+            if odds: sel['odds'] = odds
+            result['selections'].append(sel)
+            i += 2; continue
+
+        # ── Matchup: "Cubs @ Guardians" or "Padres @ Red Sox"
+        if re.search(r'\s(@|vs\.?)\s', text, re.I):
+            current_event = text.strip()
+            if result['selections'] and not result['selections'][-1].get('event'):
+                result['selections'][-1]['event'] = current_event
+            i += 1; continue
+
+        # ── Date/time ──
+        if re.search(r'(Today|Tomorrow),?\s+\d+:\d+', text, re.I):
+            i += 1; continue
+
+        i += 1
+
+    # Detect sport
+    all_text = ' '.join(l['text'] for l in lines)
+    result['sport'] = detect_sport_from_text(all_text)
+
+    return result
+
 # ── Main parse function ───────────────────────────────────────────────────────
 def parse_slip(img_path: str, sportsbook: str = None) -> dict:
     lines = extract_lines(img_path)
@@ -1317,6 +1800,7 @@ def parse_slip(img_path: str, sportsbook: str = None) -> dict:
         'BetMGM': parse_betmgm,
         'Fanatics': parse_fanatics,
         'Onyx': parse_onyx,
+        'Hard Rock': parse_hardrock,
     }
 
     parser = parsers.get(book)
