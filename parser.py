@@ -222,6 +222,15 @@ SPORT_TEAMS = {
 
 def detect_sport_from_text(text: str) -> str:
     text_lower = text.lower()
+    # Check for strong sport-specific keywords first (overrides team matching)
+    if re.search(r'(shots on goal|goalscorer|goal scorer|puck\s*line|saves o/u|blocked shots|faceoffs)', text_lower):
+        return 'NHL'
+    if re.search(r'(strikeouts|home run|total bases|runs \+ rbi|hits \+ runs|1st inning|earned runs|innings pitched|hits allowed)', text_lower):
+        return 'MLB'
+    if re.search(r'(three pointers|3-pointers|double double|triple double|rebounds|fantasy score)', text_lower):
+        return 'NBA'
+    if re.search(r'(passing yards|rushing yards|receiving yards|touchdowns|receptions)', text_lower):
+        return 'NFL'
     for sport, teams in SPORT_TEAMS.items():
         for team in teams:
             if team.lower() in text_lower:
@@ -373,6 +382,22 @@ def parse_draftkings(lines: list[dict]) -> dict:
         if line_m:
             current_line = line_m.group(1) + '+'
             continue
+
+        # ── Over/Under + game market: "Under 0.5" / "Runs - 1st Inning"
+        ou_m = re.match(r'^(Over|Under)\s+([\d\.]+)\s*([+-]\d+)?$', text.strip(), re.I)
+        if ou_m and i + 1 < len(texts):
+            next_text = texts[i + 1].strip()
+            if any(re.search(pat, next_text, re.I) for pat in DK_GAME_MARKETS):
+                result['selections'].append({
+                    'pick': ou_m.group(1),
+                    'line': ou_m.group(2),
+                    'odds': ou_m.group(3) or '',
+                    'market': next_text,
+                    'pick_type': 'GAME_PROP',
+                    'event': current_event,
+                })
+                current_line = ''
+                continue
 
         # ── Game-level market: "No Home Run" with "1st Home Run Type" below
         if re.match(r'^(No Home Run|Home Run|No Run)', text.strip(), re.I):
