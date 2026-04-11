@@ -734,7 +734,8 @@ def parse_fanduel(lines: list[dict]) -> dict:
                     'pick': player_ou_m.group(2),
                     'line': player_ou_m.group(3),
                     'odds': player_ou_m.group(4) or '',
-                    'market': texts[i+1].strip()
+                    'market': texts[i+1].strip(),
+                    'event': current_event
                 })
                 i += 2; continue
 
@@ -762,7 +763,7 @@ def parse_fanduel(lines: list[dict]) -> dict:
                 elif 'over' in text.lower(): pick_dir = 'Over'
                 result['selections'].append({
                     'player': player, 'odds': odds, 'line': line,
-                    'pick': pick_dir, 'market': market, 'event': event
+                    'pick': pick_dir, 'market': market, 'event': event or current_event
                 })
                 i += 3 if event else i + 2; continue
 
@@ -777,7 +778,8 @@ def parse_fanduel(lines: list[dict]) -> dict:
             line_m = re.search(r'(\d+\.?\d*)\+?', market)
             result['selections'].append({
                 'player': player, 'market': market,
-                'line': line_m.group(1) if line_m else ''
+                'line': line_m.group(1) if line_m else '',
+                'event': current_event
             })
             i += 2; continue
 
