@@ -1405,29 +1405,80 @@ def parse_fanatics(lines: list[dict]) -> dict:
                 result['selections'].append(sel)
                 i += consumed; continue
 
-        # ── Format 3b: Paired player grid — "Brandon Lowe1+ Mike Busch 1+" / "ALT Hits ALT Hits"
-        paired_m = re.findall(r'([A-Z][a-zA-Z\'\-]+(?:\s[A-Z][a-zA-Z\'\-]+)*)\s*(\d+)\+', text)
+        # ── Format 3b: Paired player grid — "Brent Rooker 1+ Heriberto Hernandez 1+" ──
+        #
+        # Fanatics lays parlays out in a two-column grid. Each parlay row has:
+        #   row N:   "Player A 1+   Player B 1+"          (players, both columns)
+        #   row N+1: "ALT Hits       ALT Hits"            (markets, both columns)
+        #   row N+2: "Team A at Team B   Team C at Team D" (matchup line 1, both cols)
+        #   row N+3: "City A             City B"          (matchup line 2 wrap)
+        #
+        # OCR groups tokens by y, so rows N+2 and N+3 each contain tokens from
+        # both columns. Joining them left-to-right with row_text gives the
+        # left-col and right-col player the same concatenated matchup —
+        # "Athletics at Toronto Colorado Rockies at" — instead of the per-column
+        # matchup each player should get.
+        #
+        # Fix: derive a column split-x from the player row's own bbox midpoint
+        # and, for each matchup row, split tokens by that x so each player only
+        # gets tokens from their column. Wrapped continuation rows (no
+        # "at/vs/@" separator) are also captured; boundary markers stop the
+        # collection.
+        paired_m = re.findall(
+            r'([A-Z][a-zA-Z\'\-]+(?:\s[A-Z][a-zA-Z\'\-]+)*)\s*(\d+)\+', text
+        )
         if len(paired_m) >= 2 and i + 1 < len(texts):
             market_line = texts[i + 1]
-            # Split market line: "ALT Hits ALT Hits" → ["ALT Hits", "ALT Hits"]
             market_parts = re.split(r'\s{2,}', market_line.strip())
             if len(market_parts) < len(paired_m):
                 market_parts = [market_line.strip()] * len(paired_m)
-            # Look for matchup lines below
-            event_parts = []
+
+            # Column split-x from the current (player) row's token spread
+            player_row_tokens = groups[i] if i < len(groups) else []
+            split_x = None
+            if len(player_row_tokens) >= 2:
+                xs = [t['x'] for t in player_row_tokens]
+                split_x = (min(xs) + max(xs)) / 2
+
+            # Collect matchup row groups (not just texts) so we can split by x
+            event_groups: list = []
             consumed = 2
-            for j in range(i + 2, min(i + 4, len(texts))):
-                if re.search(r'\s(at|vs\.?|@)\s', texts[j], re.I):
-                    event_parts.append(texts[j].strip())
-                    consumed += 1
-                else:
+            for j_off, j in enumerate(range(i + 2, min(i + 5, len(texts)))):
+                row = texts[j]
+                # Hard boundaries
+                if re.match(r'^(Wager|FCash|Cash\s*out|Share|Reuse|\d+\s+Leg\s+)', row, re.I):
                     break
+                # Another paired-player row ends this matchup block
+                paired_next = re.findall(
+                    r'([A-Z][a-zA-Z\'\-]+(?:\s[A-Z][a-zA-Z\'\-]+)*)\s*\d+\+', row
+                )
+                if len(paired_next) >= 2:
+                    break
+                # First matchup row must contain a separator; later rows are wraps.
+                if j_off == 0 and not re.search(r'\s(at|vs\.?|@)\s', row, re.I):
+                    break
+                event_groups.append(groups[j] if j < len(groups) else [])
+                consumed += 1
+
             for idx, (player, line) in enumerate(paired_m):
                 sel = {'player': player.strip(), 'line': line + '+'}
                 if idx < len(market_parts):
                     sel['market'] = market_parts[idx].strip()
-                if event_parts:
-                    sel['event'] = event_parts[min(idx, len(event_parts)-1)]
+
+                if event_groups and split_x is not None:
+                    parts_for_col = []
+                    for g in event_groups:
+                        if idx == 0:
+                            side = [t['text'] for t in g if t['x'] < split_x]
+                        else:
+                            side = [t['text'] for t in g if t['x'] >= split_x]
+                        if side:
+                            parts_for_col.append(' '.join(side))
+                    if parts_for_col:
+                        sel['event'] = ' '.join(parts_for_col).strip()
+                elif event_groups:
+                    sel['event'] = row_text(event_groups[min(idx, len(event_groups) - 1)])
+
                 result['selections'].append(sel)
             i += consumed; continue
 
