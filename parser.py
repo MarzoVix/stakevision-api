@@ -1455,7 +1455,8 @@ def parse_fanatics(lines: list[dict]) -> dict:
                 if len(paired_next) >= 2:
                     break
                 # First matchup row must contain a separator; later rows are wraps.
-                if j_off == 0 and not re.search(r'\s(at|vs\.?|@)\s', row, re.I):
+                # Accept "at" at end of row too — team name may wrap to next line.
+                if j_off == 0 and not re.search(r'\s(at|vs\.?|@)(\s|$)', row, re.I):
                     break
                 event_groups.append(groups[j] if j < len(groups) else [])
                 consumed += 1
@@ -1544,7 +1545,10 @@ def parse_fanatics(lines: list[dict]) -> dict:
                     # Another "Player-Stat Player-Stat" row signals next pair
                     if re.search(r'[A-Z][a-zA-Z]+\s*[-–]\s*\w+', row) and j_off > 0:
                         break
-                    if j_off == 0 and not re.search(r'\s(at|vs\.?|@)\s', row, re.I):
+                    # First matchup row needs a separator; team name may wrap
+                    # to a second row (e.g. 'Columbus Blue Jackets at' then
+                    # 'Philadelphia Flyers'), so accept "at" at end of row too.
+                    if j_off == 0 and not re.search(r'\s(at|vs\.?|@)(\s|$)', row, re.I):
                         break
                     matchup_groups.append(groups[j] if j < len(groups) else [])
                     consumed += 1
