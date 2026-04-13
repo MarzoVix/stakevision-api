@@ -1296,13 +1296,6 @@ def parse_fanatics(lines: list[dict]) -> dict:
     groups = group_lines(lines, threshold=20)
     texts = [row_text(g) for g in groups]
 
-    # TEMP DEBUG — dump the raw OCR rows so we can see what Fanatics slips
-    # actually look like coming out of PaddleOCR. Remove once paired-grid
-    # parsing is verified on real slips.
-    print('[Fanatics][DEBUG] row count:', len(texts), flush=True)
-    for _idx, _t in enumerate(texts[:40]):
-        print(f'[Fanatics][DEBUG] row {_idx:02d}: {_t!r}', flush=True)
-
     result = {'sportsbook': 'Fanatics', 'bet_type': '', 'total_odds': '',
               'wager': '', 'payout': '', 'selections': []}
 
@@ -1434,12 +1427,7 @@ def parse_fanatics(lines: list[dict]) -> dict:
         paired_m = re.findall(
             r'([A-Z][a-zA-Z\'\-]+(?:\s[A-Z][a-zA-Z\'\-]+)*)\s*(\d+)\+', text
         )
-        # TEMP DEBUG — which rows the paired-grid regex considers
-        if re.search(r'\d+\+', text):
-            print(f'[Fanatics][DEBUG] row {i} candidate (has N+): {text!r}', flush=True)
-            print(f'[Fanatics][DEBUG] row {i} paired_m matches: {paired_m}', flush=True)
         if len(paired_m) >= 2 and i + 1 < len(texts):
-            print(f'[Fanatics][DEBUG] Format 3b firing on row {i} with {len(paired_m)} players', flush=True)
             market_line = texts[i + 1]
             market_parts = re.split(r'\s{2,}', market_line.strip())
             if len(market_parts) < len(paired_m):
@@ -1512,32 +1500,76 @@ def parse_fanatics(lines: list[dict]) -> dict:
                 result['selections'].append(sel2)
             i += 2; continue
 
-        # ── Format 3: Parlay grid — "1+ 8+" line / "Player-Stat Player-Stat" ──
-        # Lines like "1+ 8+" or "8+ 1+" are pick line pairs
+        # ── Format 3: Parlay grid — "1+ 1+" line / "Player-Stat Player-Stat" ──
+        #
+        # Fanatics two-column parlay grid:
+        #   row N:   "1+ 1+"                                  (lines for both cols)
+        #   row N+1: "Lucas Raymond-Points Elias Lindholm-Points" (pairs, both cols)
+        #   row N+2: "Ottawa Senators at Toronto   Other City at Other" (matchup, 2 cols)
+        #   row N+3: wrap line (second half of team names, no "at")
+        #
+        # OCR groups tokens by y, so every "Team A at Team B" row contains
+        # tokens from BOTH columns. The old parser joined them with row_text
+        # and then assigned the SAME string to every player — so Lucas and
+        # Elias both got 'Ottawa Senators at Toronto Maple Leafs at'.
+        #
+        # Fix: derive a column split-x from the stat row (row N+1) which
+        # clearly has two player-stat groups side by side, then for each
+        # matchup row split its tokens by x and assign per-column.
         if re.match(r'^[\d\+\s]+$', text.strip()) and '+' in text:
             grid_lines = re.findall(r'(\d+)\+', text)
-            # Next line should be player-stat pairs: "Timo Meier-Points Dominick Barlow-Points"
             if i + 1 < len(texts):
                 stat_line = texts[i + 1]
-                # Split by finding player-stat patterns
                 pairs = re.findall(r'([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)*)\s*[-–]\s*(\w+)', stat_line)
-                matchup_parts = []
-                if i + 2 < len(texts):
-                    # Matchup may span 2 lines
-                    for j in range(i + 2, min(i + 4, len(texts))):
-                        if re.search(r'\s(at|vs\.?|@)\s', texts[j], re.I):
-                            matchup_parts.append(texts[j].strip())
-                        else:
-                            break
-                event = ' '.join(matchup_parts)
+
+                # Column split-x from the stat row's token spread
+                stat_row_tokens = groups[i + 1] if i + 1 < len(groups) else []
+                split_x = None
+                if len(stat_row_tokens) >= 2 and len(pairs) >= 2:
+                    xs = [t['x'] for t in stat_row_tokens]
+                    split_x = (min(xs) + max(xs)) / 2
+
+                # Collect matchup row groups (not just texts) — first row must
+                # have "at/vs/@" separator, subsequent rows are wraps of team
+                # names. Stop at boundary markers or a new line-marker row.
+                matchup_groups: list = []
+                consumed = 2
+                for j_off, j in enumerate(range(i + 2, min(i + 5, len(texts)))):
+                    row = texts[j]
+                    if re.match(r'^(Wager|FCash|Cash\s*out|Share|Reuse|\d+\s+Leg\s+)', row, re.I):
+                        break
+                    # New "1+ 1+" line marker row signals the next pair's block
+                    if re.match(r'^[\d\+\s]+$', row.strip()) and '+' in row:
+                        break
+                    # Another "Player-Stat Player-Stat" row signals next pair
+                    if re.search(r'[A-Z][a-zA-Z]+\s*[-–]\s*\w+', row) and j_off > 0:
+                        break
+                    if j_off == 0 and not re.search(r'\s(at|vs\.?|@)\s', row, re.I):
+                        break
+                    matchup_groups.append(groups[j] if j < len(groups) else [])
+                    consumed += 1
+
                 for idx, (player, stat) in enumerate(pairs):
                     sel = {'player': player, 'market': stat}
                     if idx < len(grid_lines):
                         sel['line'] = grid_lines[idx] + '+'
-                    if event:
-                        sel['event'] = event
+
+                    if matchup_groups and split_x is not None:
+                        parts_for_col = []
+                        for g in matchup_groups:
+                            if idx == 0:
+                                side = [t['text'] for t in g if t['x'] < split_x]
+                            else:
+                                side = [t['text'] for t in g if t['x'] >= split_x]
+                            if side:
+                                parts_for_col.append(' '.join(side))
+                        if parts_for_col:
+                            sel['event'] = ' '.join(parts_for_col).strip()
+                    elif matchup_groups:
+                        sel['event'] = ' '.join(row_text(g) for g in matchup_groups)
+
                     result['selections'].append(sel)
-                i += 2 + len(matchup_parts)
+                i += consumed
                 continue
 
         # ── Market description (attach to last selection) ──
