@@ -1296,6 +1296,13 @@ def parse_fanatics(lines: list[dict]) -> dict:
     groups = group_lines(lines, threshold=20)
     texts = [row_text(g) for g in groups]
 
+    # TEMP DEBUG — dump the raw OCR rows so we can see what Fanatics slips
+    # actually look like coming out of PaddleOCR. Remove once paired-grid
+    # parsing is verified on real slips.
+    print('[Fanatics][DEBUG] row count:', len(texts), flush=True)
+    for _idx, _t in enumerate(texts[:40]):
+        print(f'[Fanatics][DEBUG] row {_idx:02d}: {_t!r}', flush=True)
+
     result = {'sportsbook': 'Fanatics', 'bet_type': '', 'total_odds': '',
               'wager': '', 'payout': '', 'selections': []}
 
@@ -1427,7 +1434,12 @@ def parse_fanatics(lines: list[dict]) -> dict:
         paired_m = re.findall(
             r'([A-Z][a-zA-Z\'\-]+(?:\s[A-Z][a-zA-Z\'\-]+)*)\s*(\d+)\+', text
         )
+        # TEMP DEBUG — which rows the paired-grid regex considers
+        if re.search(r'\d+\+', text):
+            print(f'[Fanatics][DEBUG] row {i} candidate (has N+): {text!r}', flush=True)
+            print(f'[Fanatics][DEBUG] row {i} paired_m matches: {paired_m}', flush=True)
         if len(paired_m) >= 2 and i + 1 < len(texts):
+            print(f'[Fanatics][DEBUG] Format 3b firing on row {i} with {len(paired_m)} players', flush=True)
             market_line = texts[i + 1]
             market_parts = re.split(r'\s{2,}', market_line.strip())
             if len(market_parts) < len(paired_m):
