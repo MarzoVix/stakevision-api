@@ -1398,7 +1398,16 @@ def parse_fanatics(lines: list[dict]) -> dict:
                 if i + 2 < len(texts) and re.search(r'(NHL|NBA|MLB|NFL|at|vs\.?|@)', texts[i+2], re.I):
                     event_parts = [texts[i+2].strip()]
                     consumed = 3
-                    if i + 3 < len(texts) and re.match(r'^\d+:\d+', texts[i+3]):
+                    # If matchup row ends with a bare separator (e.g. "Columbus Blue Jackets at"),
+                    # the second team name wrapped to the next row — grab it.
+                    if i + 3 < len(texts) and re.search(r'\s(at|vs\.?|@)\s*$', event_parts[-1], re.I):
+                        next_row = texts[i + 3].strip()
+                        if next_row and not re.match(
+                            r'^(Wager|FCash|Cash\s*out|\d+\+|Bet\s*ID|\d+:\d+|[A-Z][a-zA-Z\'\-]+\s*[-–])',
+                            next_row, re.I):
+                            event_parts.append(next_row)
+                            consumed = 4
+                    elif i + 3 < len(texts) and re.match(r'^\d+:\d+', texts[i+3]):
                         event_parts.append(texts[i+3].strip())
                         consumed = 4
                     sel['event'] = ' '.join(event_parts)
