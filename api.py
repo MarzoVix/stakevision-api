@@ -1,3 +1,4 @@
+import numpy_compat  # noqa: F401 — must be first; patches np.sctypes for NumPy 2.0 / imgaug compatibility
 import os
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
